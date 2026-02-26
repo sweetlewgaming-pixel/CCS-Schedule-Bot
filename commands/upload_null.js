@@ -2,7 +2,6 @@ const { ChannelType, MessageFlags, SlashCommandBuilder } = require('discord.js')
 
 const { isAdminAuthorized } = require('../utils/permissions');
 const { getMatchByChannel, updateMatchBallchasingLink } = require('../services/googleSheets');
-const { getRoleIdByTeamName } = require('../utils/teamRoles');
 
 const LEAGUE_SCHEDULING_CATEGORIES = {
   CCS: 'CCS SCHEDULING',
@@ -31,17 +30,6 @@ function isBallchasingGroupUrl(value) {
   return /^https?:\/\/(?:www\.)?ballchasing\.com\/group\/[A-Za-z0-9_-]+(?:[/?].*)?$/i.test(String(value || '').trim());
 }
 
-async function isTeamMember(interaction, homeTeam, awayTeam) {
-  const memberRoles = interaction.member?.roles?.cache;
-  if (!memberRoles) {
-    return false;
-  }
-
-  const homeRoleId = await getRoleIdByTeamName(interaction.guild, homeTeam);
-  const awayRoleId = await getRoleIdByTeamName(interaction.guild, awayTeam);
-  return Boolean((homeRoleId && memberRoles.has(homeRoleId)) || (awayRoleId && memberRoles.has(awayRoleId)));
-}
-
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('upload_null')
@@ -53,6 +41,14 @@ module.exports = {
     if (!interaction.guild || !interaction.channel || interaction.channel.type !== ChannelType.GuildText) {
       await interaction.reply({
         content: 'Use this command in a server text channel.',
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    if (!isAdminAuthorized(interaction)) {
+      await interaction.reply({
+        content: 'You do not have permission to use this command.',
         flags: MessageFlags.Ephemeral,
       });
       return;
@@ -80,15 +76,6 @@ module.exports = {
     if (!match) {
       await interaction.reply({
         content: 'Could not determine match from this channel name.',
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
-
-    const allowed = isAdminAuthorized(interaction) || (await isTeamMember(interaction, match.homeTeam, match.awayTeam));
-    if (!allowed) {
-      await interaction.reply({
-        content: 'Only players on the two teams (or elevated staff roles) can use this command.',
         flags: MessageFlags.Ephemeral,
       });
       return;
