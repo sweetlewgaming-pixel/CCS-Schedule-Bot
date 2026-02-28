@@ -452,7 +452,7 @@ function normalizeStatsValue(value) {
 
 function buildBallchasingPlayerRows(match, groupData) {
   const players = Array.isArray(groupData?.players) ? groupData.players : [];
-  return players.map((player) => {
+  const rows = players.map((player) => {
     const row = buildPlayerRow(match, player);
     const normalized = {};
     for (const [key, value] of Object.entries(row)) {
@@ -460,6 +460,29 @@ function buildBallchasingPlayerRows(match, groupData) {
     }
     return normalized;
   });
+
+  // "Highest Score" is a team-relative indicator: 1 for top scorer(s) on each team, 0 for others.
+  const teamMaxScores = new Map();
+  for (const row of rows) {
+    const teamKey = String(row.team_name || '').trim().toLowerCase();
+    const score = Number(row.score);
+    if (!teamKey || !Number.isFinite(score)) {
+      continue;
+    }
+    const current = teamMaxScores.get(teamKey);
+    if (current === undefined || score > current) {
+      teamMaxScores.set(teamKey, score);
+    }
+  }
+
+  for (const row of rows) {
+    const teamKey = String(row.team_name || '').trim().toLowerCase();
+    const score = Number(row.score);
+    const teamMax = teamMaxScores.get(teamKey);
+    row.highest_score = Number.isFinite(score) && Number.isFinite(teamMax) && score === teamMax ? 1 : 0;
+  }
+
+  return rows;
 }
 
 function applyReplayTeammateDistanceFallback(playerRows, replayDistanceMap) {
