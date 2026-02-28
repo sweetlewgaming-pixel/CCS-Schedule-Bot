@@ -149,19 +149,6 @@ module.exports = {
       return;
     }
 
-    let appendPlayerResult;
-    let appendTeamResult;
-    try {
-      const group = await fetchBallchasingGroup(link);
-      const playerRows = buildBallchasingPlayerRows(match, group.data);
-      const teamRows = buildBallchasingTeamRows(group.data, playerRows);
-      appendPlayerResult = await appendPlayerInputRows(league, playerRows);
-      appendTeamResult = await appendTeamInputRows(league, teamRows);
-    } catch (error) {
-      await interaction.editReply(`Failed to import ballchasing raw stats: ${error.message}`);
-      return;
-    }
-
     try {
       await updateMatchBallchasingLink(league, match.matchId, link, { preventDuplicate: false });
     } catch (error) {
@@ -178,9 +165,30 @@ module.exports = {
     }
 
     await interaction.editReply(
-      `✅ Ballchasing group link uploaded successfully.\n` +
-        `✅ Imported ${appendPlayerResult.insertedRows} player row(s) into ${appendPlayerResult.sheetName}.\n` +
-        `✅ Imported ${appendTeamResult.insertedRows} team row(s) into ${appendTeamResult.sheetName}.`
+      '✅ Ballchasing group link uploaded successfully and posted.\n' +
+        '⏳ Raw stats import started in background. You do not need to wait in this channel.'
     );
+
+    (async () => {
+      try {
+        const group = await fetchBallchasingGroup(link);
+        const playerRows = buildBallchasingPlayerRows(match, group.data);
+        const teamRows = buildBallchasingTeamRows(group.data, playerRows);
+        const appendPlayerResult = await appendPlayerInputRows(league, playerRows);
+        const appendTeamResult = await appendTeamInputRows(league, teamRows);
+        await interaction.followUp({
+          content:
+            `✅ Finished raw stats import.\n` +
+            `✅ Imported ${appendPlayerResult.insertedRows} player row(s) into ${appendPlayerResult.sheetName}.\n` +
+            `✅ Imported ${appendTeamResult.insertedRows} team row(s) into ${appendTeamResult.sheetName}.`,
+          flags: MessageFlags.Ephemeral,
+        });
+      } catch (error) {
+        await interaction.followUp({
+          content: `⚠️ Link was saved, but raw stats import failed: ${error.message}`,
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+    })();
   },
 };
