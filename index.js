@@ -120,6 +120,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      if (uploadCommand.handleButtonInteraction) {
+        await uploadCommand.handleButtonInteraction(interaction);
+      }
+
+      if (interaction.deferred || interaction.replied) {
+        return;
+      }
+
+      if (uploadNullCommand.handleButtonInteraction) {
+        await uploadNullCommand.handleButtonInteraction(interaction);
+      }
+
+      if (interaction.deferred || interaction.replied) {
+        return;
+      }
+
       if (rebuildWeekCommand.handleButtonInteraction) {
         await rebuildWeekCommand.handleButtonInteraction(interaction);
       }

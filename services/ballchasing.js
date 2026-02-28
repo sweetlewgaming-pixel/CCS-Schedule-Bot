@@ -604,9 +604,111 @@ function buildBallchasingTeamRows(groupData, playerRows) {
   });
 }
 
+function normalizeTeamText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^\w\s-]/g, '')
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildTeamNameVariants(name) {
+  const normalized = normalizeTeamText(name);
+  if (!normalized) {
+    return new Set();
+  }
+
+  const compact = normalized.replace(/[\s-]+/g, '');
+  const parts = normalized.split(/[\s-]+/).filter(Boolean);
+  const variants = new Set([normalized, compact]);
+
+  if (parts.length >= 2) {
+    variants.add(parts[parts.length - 1]);
+    variants.add(parts.slice(1).join(''));
+  }
+
+  return variants;
+}
+
+function extractGroupTeamNames(groupData) {
+  const names = new Set();
+
+  const teams = Array.isArray(groupData?.teams) ? groupData.teams : [];
+  for (const team of teams) {
+    const name = String(team?.name || team?.team || '').trim();
+    if (name) {
+      names.add(name);
+    }
+  }
+
+  const players = Array.isArray(groupData?.players) ? groupData.players : [];
+  for (const player of players) {
+    const team = String(player?.team || '').trim();
+    if (team) {
+      names.add(team);
+    }
+  }
+
+  return [...names];
+}
+
+function doTeamNamesMatch(expectedTeamName, foundTeamNames) {
+  const expectedVariants = buildTeamNameVariants(expectedTeamName);
+  if (!expectedVariants.size) {
+    return false;
+  }
+
+  for (const foundName of foundTeamNames) {
+    const foundVariants = buildTeamNameVariants(foundName);
+    for (const expected of expectedVariants) {
+      if (!expected || expected.length < 3) {
+        continue;
+      }
+      for (const found of foundVariants) {
+        if (!found || found.length < 3) {
+          continue;
+        }
+        if (expected === found || expected.includes(found) || found.includes(expected)) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+function compareGroupTeamsToMatch(groupData, homeTeam, awayTeam) {
+  const foundTeams = extractGroupTeamNames(groupData);
+  if (!foundTeams.length) {
+    return {
+      canValidate: false,
+      isMatch: false,
+      expectedTeams: [homeTeam, awayTeam].filter(Boolean),
+      foundTeams: [],
+      missingTeams: [homeTeam, awayTeam].filter(Boolean),
+    };
+  }
+
+  const expectedTeams = [homeTeam, awayTeam].filter(Boolean);
+  const missingTeams = expectedTeams.filter((team) => !doTeamNamesMatch(team, foundTeams));
+
+  return {
+    canValidate: true,
+    isMatch: missingTeams.length === 0,
+    expectedTeams,
+    foundTeams,
+    missingTeams,
+  };
+}
+
 module.exports = {
   extractGroupIdFromUrl,
   fetchBallchasingGroup,
   buildBallchasingPlayerRows,
   buildBallchasingTeamRows,
+  extractGroupTeamNames,
+  compareGroupTeamsToMatch,
 };
