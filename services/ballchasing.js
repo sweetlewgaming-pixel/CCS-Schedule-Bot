@@ -41,6 +41,124 @@ async function fetchBallchasingGroup(groupUrl) {
   };
 }
 
+async function fetchBallchasingReplay(replayId) {
+  const token = String(process.env.BALLCHASING_API_KEY || '').trim();
+  if (!token) {
+    throw new Error('BALLCHASING_API_KEY is missing from environment.');
+  }
+
+  const response = await fetch(`https://ballchasing.com/api/replays/${encodeURIComponent(String(replayId || '').trim())}`, {
+    headers: {
+      Authorization: token,
+    },
+  });
+
+  if (!response.ok) {
+    let message = `Ballchasing replay API error (${response.status})`;
+    try {
+      const body = await response.json();
+      if (body?.error) {
+        message = `${message}: ${body.error}`;
+      }
+    } catch (_) {
+      // Ignore JSON parse issues for non-JSON error bodies.
+    }
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+function normalizePlayerNameKey(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^\w\s-]/g, '')
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+async function fetchGroupReplayTeammateDistanceMap(groupUrl) {
+  const token = String(process.env.BALLCHASING_API_KEY || '').trim();
+  if (!token) {
+    throw new Error('BALLCHASING_API_KEY is missing from environment.');
+  }
+
+  const groupId = extractGroupIdFromUrl(groupUrl);
+  if (!groupId) {
+    throw new Error('Invalid ballchasing group link.');
+  }
+
+  const listResponse = await fetch(
+    `https://ballchasing.com/api/replays?group=${encodeURIComponent(groupId)}&count=200`,
+    {
+      headers: {
+        Authorization: token,
+      },
+    }
+  );
+
+  if (!listResponse.ok) {
+    return new Map();
+  }
+
+  const listBody = await listResponse.json().catch(() => null);
+  const replayList = Array.isArray(listBody?.list) ? listBody.list : [];
+  if (!replayList.length) {
+    return new Map();
+  }
+
+  const sums = new Map();
+  const counts = new Map();
+
+  for (const replayItem of replayList) {
+    const replayId = String(replayItem?.id || '').trim();
+    if (!replayId) {
+      continue;
+    }
+
+    let replay;
+    try {
+      replay = await fetchBallchasingReplay(replayId);
+    } catch (_) {
+      continue;
+    }
+
+    const sides = [replay?.blue?.players, replay?.orange?.players];
+    for (const sidePlayers of sides) {
+      if (!Array.isArray(sidePlayers)) {
+        continue;
+      }
+
+      for (const player of sidePlayers) {
+        const nameKey = normalizePlayerNameKey(player?.name);
+        if (!nameKey) {
+          continue;
+        }
+
+        const value = Number(player?.stats?.positioning?.avg_distance_to_mates);
+        if (!Number.isFinite(value) || value <= 0) {
+          continue;
+        }
+
+        sums.set(nameKey, (sums.get(nameKey) || 0) + value);
+        counts.set(nameKey, (counts.get(nameKey) || 0) + 1);
+      }
+    }
+  }
+
+  const averages = new Map();
+  for (const [key, sum] of sums.entries()) {
+    const count = counts.get(key) || 0;
+    if (count > 0) {
+      averages.set(key, sum / count);
+    }
+  }
+
+  return averages;
+}
+
 function getPathValue(obj, path) {
   if (!obj || !path) {
     return undefined;
@@ -342,6 +460,27 @@ function buildBallchasingPlayerRows(match, groupData) {
     }
     return normalized;
   });
+}
+
+function applyReplayTeammateDistanceFallback(playerRows, replayDistanceMap) {
+  if (!Array.isArray(playerRows) || !(replayDistanceMap instanceof Map) || replayDistanceMap.size === 0) {
+    return playerRows;
+  }
+
+  for (const row of playerRows) {
+    const current = Number(row.avg_distance_to_team_mates_per_game);
+    if (Number.isFinite(current) && current > 0) {
+      continue;
+    }
+
+    const key = normalizePlayerNameKey(row.player_name);
+    const fallback = replayDistanceMap.get(key);
+    if (Number.isFinite(fallback) && fallback > 0) {
+      row.avg_distance_to_team_mates_per_game = roundNumber(fallback, 2);
+    }
+  }
+
+  return playerRows;
 }
 
 function computePerGame(total, games) {
@@ -736,7 +875,9 @@ function compareGroupTeamsToMatch(groupData, homeTeam, awayTeam) {
 module.exports = {
   extractGroupIdFromUrl,
   fetchBallchasingGroup,
+  fetchGroupReplayTeammateDistanceMap,
   buildBallchasingPlayerRows,
+  applyReplayTeammateDistanceFallback,
   buildBallchasingTeamRows,
   extractGroupTeamNames,
   compareGroupTeamsToMatch,

@@ -10,7 +10,9 @@ const {
 const { getRoleIdByTeamName } = require('../utils/teamRoles');
 const {
   fetchBallchasingGroup,
+  fetchGroupReplayTeammateDistanceMap,
   buildBallchasingPlayerRows,
+  applyReplayTeammateDistanceFallback,
   buildBallchasingTeamRows,
   compareGroupTeamsToMatch,
 } = require('../services/ballchasing');
@@ -172,6 +174,8 @@ async function processUpload(interaction, league, match, link, groupData) {
   (async () => {
     try {
       const playerRows = buildBallchasingPlayerRows(match, groupData);
+      const replayDistanceMap = await fetchGroupReplayTeammateDistanceMap(link).catch(() => new Map());
+      applyReplayTeammateDistanceFallback(playerRows, replayDistanceMap);
       const teamRows = buildBallchasingTeamRows(groupData, playerRows);
       await appendPlayerInputRows(league, playerRows);
       await appendTeamInputRows(league, teamRows);
