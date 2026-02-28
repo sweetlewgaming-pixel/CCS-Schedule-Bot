@@ -168,6 +168,9 @@ module.exports = {
       '✅ Ballchasing group link uploaded successfully and posted.\n' +
         '⏳ Raw stats import started in background. You do not need to wait in this channel.'
     );
+    await interaction.channel
+      .send(`✅ Ballchasing link uploaded by <@${interaction.user.id}>. No additional uploads are needed for this match.`)
+      .catch(() => {});
 
     (async () => {
       try {

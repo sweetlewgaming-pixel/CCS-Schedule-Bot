@@ -124,6 +124,9 @@ module.exports = {
       '✅ Ballchasing group link uploaded to sheet only.\n' +
         '⏳ Raw stats import started in background. You do not need to wait in this channel.'
     );
+    await interaction.channel
+      .send(`✅ Ballchasing link uploaded by <@${interaction.user.id}> (sheet-only mode). No additional uploads are needed for this match.`)
+      .catch(() => {});
 
     (async () => {
       try {
