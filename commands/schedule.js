@@ -519,7 +519,7 @@ module.exports = {
 
     const inferredLeague = inferLeagueFromParentCategory(interaction.channel);
     if (inferredLeague && interaction.channel?.name?.includes('-at-')) {
-      const inferredMatch = await getMatchByChannel(inferredLeague, interaction.channel.name);
+      const inferredMatch = await getMatchByChannel(inferredLeague, interaction.channel);
       if (inferredMatch) {
         const week = normalizeWeekValue(inferredMatch.week);
         await interaction.reply({

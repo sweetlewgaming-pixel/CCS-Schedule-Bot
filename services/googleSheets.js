@@ -163,17 +163,54 @@ function cleanChannelNameForMatch(value) {
     .trim();
 }
 
-function buildMatchupChannelCandidates(homeTeam, awayTeam) {
+function buildMatchupChannelName(homeTeam, awayTeam, orientation = 'AWAY_AT_HOME') {
   const homeSlug = slugifyTeamName(homeTeam);
   const awaySlug = slugifyTeamName(awayTeam);
-  const awayAtHome = `${awaySlug}-at-${homeSlug}`;
-  const homeAtAway = `${homeSlug}-at-${awaySlug}`;
-  return new Set([awayAtHome, homeAtAway]);
+  if (orientation === 'HOME_AT_AWAY') {
+    return `${homeSlug}-at-${awaySlug}`;
+  }
+  return `${awaySlug}-at-${homeSlug}`;
 }
 
-async function getMatchByChannel(league, channelName) {
+function parseMatchIdFromChannelTopic(topic) {
+  const text = String(topic || '').trim();
+  if (!text) {
+    return '';
+  }
+
+  const match = text.match(/(?:^|\|)match_id=([^|]+)/i);
+  if (!match || !match[1]) {
+    return '';
+  }
+
+  try {
+    return decodeURIComponent(match[1]).trim();
+  } catch (_) {
+    return String(match[1]).trim();
+  }
+}
+
+async function getMatchByChannel(league, channelOrName) {
+  const channelName = typeof channelOrName === 'string' ? channelOrName : channelOrName?.name;
+  const channelTopic = typeof channelOrName === 'string' ? '' : channelOrName?.topic;
   const targetName = cleanChannelNameForMatch(channelName);
   const { rows } = await getRawScheduleRows(league);
+
+  const topicMatchId = parseMatchIdFromChannelTopic(channelTopic);
+  if (topicMatchId) {
+    const exact = rows.find(({ rowData }) => String(rowData.match_id || '').trim() === topicMatchId);
+    if (exact) {
+      return {
+        matchId: String(exact.rowData.match_id || '').trim(),
+        homeTeam: String(exact.rowData.home_team || '').trim(),
+        awayTeam: String(exact.rowData.away_team || '').trim(),
+        week: String(exact.rowData.week || '').trim(),
+        date: String(exact.rowData.date || '').trim(),
+        time: String(exact.rowData.time || '').trim(),
+        rowIndex: exact.rowIndex,
+      };
+    }
+  }
 
   const candidates = rows
     .map(({ rowData, rowIndex }) => {
@@ -187,8 +224,8 @@ async function getMatchByChannel(league, channelName) {
         return null;
       }
 
-      const names = buildMatchupChannelCandidates(homeTeam, awayTeam);
-      if (!names.has(targetName)) {
+      const expectedName = buildMatchupChannelName(homeTeam, awayTeam, 'AWAY_AT_HOME');
+      if (expectedName !== targetName) {
         return null;
       }
 

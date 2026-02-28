@@ -149,7 +149,7 @@ module.exports = {
       return;
     }
 
-    const match = await getMatchByChannel(league, interaction.channel.name);
+    const match = await getMatchByChannel(league, interaction.channel);
     if (!match) {
       await interaction.reply({
         content: 'Could not determine match from this channel name.',
