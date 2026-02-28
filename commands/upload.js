@@ -196,10 +196,7 @@ module.exports = {
       await replayChannel.send(`Ballchasing upload for ${match.awayTeam} at ${match.homeTeam}: ${link}`);
     }
 
-    await interaction.editReply(
-      '✅ Ballchasing group link uploaded successfully and posted.\n' +
-        '⏳ Raw stats import started in background. You do not need to wait in this channel.'
-    );
+    await interaction.editReply('✅ Ballchasing group link uploaded successfully and posted.');
     await interaction.channel
       .send(`✅ Ballchasing link uploaded by <@${interaction.user.id}>. No additional uploads are needed for this match.`)
       .catch(() => {});
