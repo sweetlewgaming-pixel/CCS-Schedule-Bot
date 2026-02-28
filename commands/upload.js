@@ -126,6 +126,8 @@ module.exports = {
       return;
     }
 
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
     let duplicateCheckResult;
     try {
       duplicateCheckResult = await updateMatchBallchasingLink(league, match.matchId, link, {
@@ -134,20 +136,16 @@ module.exports = {
       });
     } catch (error) {
       if (error?.code === 403 || error?.response?.status === 403) {
-        await interaction.reply({
-          content: 'Google Sheets update failed: service account lacks edit permission on this league sheet.',
-          flags: MessageFlags.Ephemeral,
-        });
+        await interaction.editReply('Google Sheets update failed: service account lacks edit permission on this league sheet.');
         return;
       }
       throw error;
     }
 
     if (duplicateCheckResult.duplicate) {
-      await interaction.reply({
-        content: `A ballchasing link is already saved for this match and cannot be replaced.\nCurrent: ${duplicateCheckResult.existingLink}`,
-        flags: MessageFlags.Ephemeral,
-      });
+      await interaction.editReply(
+        `A ballchasing link is already saved for this match and cannot be replaced.\nCurrent: ${duplicateCheckResult.existingLink}`
+      );
       return;
     }
 
@@ -160,10 +158,7 @@ module.exports = {
       appendPlayerResult = await appendPlayerInputRows(league, playerRows);
       appendTeamResult = await appendTeamInputRows(league, teamRows);
     } catch (error) {
-      await interaction.reply({
-        content: `Failed to import ballchasing raw stats: ${error.message}`,
-        flags: MessageFlags.Ephemeral,
-      });
+      await interaction.editReply(`Failed to import ballchasing raw stats: ${error.message}`);
       return;
     }
 
@@ -171,10 +166,7 @@ module.exports = {
       await updateMatchBallchasingLink(league, match.matchId, link, { preventDuplicate: false });
     } catch (error) {
       if (error?.code === 403 || error?.response?.status === 403) {
-        await interaction.reply({
-          content: 'Google Sheets update failed: service account lacks edit permission on this league sheet.',
-          flags: MessageFlags.Ephemeral,
-        });
+        await interaction.editReply('Google Sheets update failed: service account lacks edit permission on this league sheet.');
         return;
       }
       throw error;
@@ -185,12 +177,10 @@ module.exports = {
       await replayChannel.send(`Ballchasing upload for ${match.awayTeam} at ${match.homeTeam}: ${link}`);
     }
 
-    await interaction.reply({
-      content:
-        `✅ Ballchasing group link uploaded successfully.\n` +
+    await interaction.editReply(
+      `✅ Ballchasing group link uploaded successfully.\n` +
         `✅ Imported ${appendPlayerResult.insertedRows} player row(s) into ${appendPlayerResult.sheetName}.\n` +
-        `✅ Imported ${appendTeamResult.insertedRows} team row(s) into ${appendTeamResult.sheetName}.`,
-      flags: MessageFlags.Ephemeral,
-    });
+        `✅ Imported ${appendTeamResult.insertedRows} team row(s) into ${appendTeamResult.sheetName}.`
+    );
   },
 };
