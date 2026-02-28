@@ -52,6 +52,27 @@ function getStatsSpreadsheetId(league) {
   return STATS_SPREADSHEET_IDS[league];
 }
 
+function getValueForHeader(row, header) {
+  if (row[header] !== undefined && row[header] !== null) {
+    return row[header];
+  }
+
+  const aliases = {
+    avg_distance_to_team_mates_per_game: ['avg_distance_to_teammates_per_game'],
+    avg_distance_to_teammates_per_game: ['avg_distance_to_team_mates_per_game'],
+    avg_distance_to_ball_has_possession_per_game: ['avg_distance_to_ball_possession_per_game'],
+    avg_distance_to_ball_possession_per_game: ['avg_distance_to_ball_has_possession_per_game'],
+  };
+
+  for (const alt of aliases[header] || []) {
+    if (row[alt] !== undefined && row[alt] !== null) {
+      return row[alt];
+    }
+  }
+
+  return '';
+}
+
 async function getRawScheduleRows(league) {
   const spreadsheetId = SPREADSHEET_IDS[league];
   if (!spreadsheetId) {
@@ -361,38 +382,34 @@ async function appendStatsRows(league, sheetName, rowsToAppend) {
   }
 
   const normalizedHeaders = headers.map(normalizeHeader);
-  const colAResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${sheetName}!A:A`,
-  });
-  const colAValues = colAResponse.data.values || [];
-  const lastUsedRow = colAValues.length;
-  const startRow = lastUsedRow + 1;
-
-  const block = [headers];
+  const values = [];
   for (const row of rowsToAppend) {
-    block.push(
+    values.push(
       normalizedHeaders.map((header) => {
-        const value = row[header];
-        return value === undefined || value === null ? '' : value;
+        return getValueForHeader(row, header);
       })
     );
   }
 
-  await sheets.spreadsheets.values.update({
+  const response = await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: `${sheetName}!A${startRow}`,
+    range: `${sheetName}!A1`,
     valueInputOption: 'USER_ENTERED',
+    insertDataOption: 'INSERT_ROWS',
     requestBody: {
-      values: block,
+      values,
     },
   });
+
+  const updatedRange = String(response.data?.updates?.updatedRange || '');
+  const startMatch = updatedRange.match(/![A-Z]+(\d+):/);
+  const startRow = startMatch ? Number(startMatch[1]) : 0;
 
   return {
     insertedRows: rowsToAppend.length,
     insertedPlayers: rowsToAppend.length,
     startRow,
-    endRow: startRow + block.length - 1,
+    endRow: startRow > 0 ? startRow + rowsToAppend.length - 1 : 0,
     sheetName,
   };
 }

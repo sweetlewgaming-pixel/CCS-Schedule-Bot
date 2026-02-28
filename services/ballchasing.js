@@ -199,17 +199,32 @@ function buildPlayerRow(match, player) {
     avg_distance_to_ball_per_game: getFirstValue(player, ['game_average.positioning.avg_distance_to_ball', 'cumulative.positioning.avg_distance_to_ball'], ''),
     avg_distance_to_ball_has_possession_per_game: getFirstValue(
       player,
-      ['game_average.positioning.avg_distance_to_ball_possession', 'cumulative.positioning.avg_distance_to_ball_possession'],
+      [
+        'game_average.positioning.avg_distance_to_ball_possession',
+        'game_average.positioning.avg_distance_to_ball_has_possession',
+        'cumulative.positioning.avg_distance_to_ball_possession',
+        'cumulative.positioning.avg_distance_to_ball_has_possession',
+      ],
       ''
     ),
     avg_distance_to_ball_no_possession_per_game: getFirstValue(
       player,
-      ['game_average.positioning.avg_distance_to_ball_no_possession', 'cumulative.positioning.avg_distance_to_ball_no_possession'],
+      [
+        'game_average.positioning.avg_distance_to_ball_no_possession',
+        'game_average.positioning.avg_distance_to_ball_without_possession',
+        'cumulative.positioning.avg_distance_to_ball_no_possession',
+        'cumulative.positioning.avg_distance_to_ball_without_possession',
+      ],
       ''
     ),
     avg_distance_to_team_mates_per_game: getFirstValue(
       player,
-      ['game_average.positioning.avg_distance_to_mates', 'cumulative.positioning.avg_distance_to_mates'],
+      [
+        'game_average.positioning.avg_distance_to_mates',
+        'game_average.positioning.avg_distance_to_teammates',
+        'cumulative.positioning.avg_distance_to_mates',
+        'cumulative.positioning.avg_distance_to_teammates',
+      ],
       ''
     ),
     demos_inflicted: getFirstValue(player, ['cumulative.demo.inflicted'], ''),
@@ -348,8 +363,26 @@ function buildTeamRowFromTeamStats(teamName, teamStats) {
     time_offensive_third: getFirstValue(teamStats, ['cumulative.positioning.time_offensive_third'], ''),
     time_offensive_third_per_game: getFirstValue(teamStats, ['game_average.positioning.time_offensive_third'], ''),
     avg_distance_to_ball_per_game: getFirstValue(teamStats, ['game_average.positioning.avg_distance_to_ball', 'cumulative.positioning.avg_distance_to_ball'], ''),
-    avg_distance_to_ball_has_possession_per_game: getFirstValue(teamStats, ['game_average.positioning.avg_distance_to_ball_possession', 'cumulative.positioning.avg_distance_to_ball_possession'], ''),
-    avg_distance_to_ball_no_possession_per_game: getFirstValue(teamStats, ['game_average.positioning.avg_distance_to_ball_no_possession', 'cumulative.positioning.avg_distance_to_ball_no_possession'], ''),
+    avg_distance_to_ball_has_possession_per_game: getFirstValue(
+      teamStats,
+      [
+        'game_average.positioning.avg_distance_to_ball_possession',
+        'game_average.positioning.avg_distance_to_ball_has_possession',
+        'cumulative.positioning.avg_distance_to_ball_possession',
+        'cumulative.positioning.avg_distance_to_ball_has_possession',
+      ],
+      ''
+    ),
+    avg_distance_to_ball_no_possession_per_game: getFirstValue(
+      teamStats,
+      [
+        'game_average.positioning.avg_distance_to_ball_no_possession',
+        'game_average.positioning.avg_distance_to_ball_without_possession',
+        'cumulative.positioning.avg_distance_to_ball_no_possession',
+        'cumulative.positioning.avg_distance_to_ball_without_possession',
+      ],
+      ''
+    ),
     demos_inflicted: getFirstValue(teamStats, ['cumulative.demo.inflicted'], ''),
     demos_inflicted_per_game: getFirstValue(teamStats, ['game_average.demo.inflicted'], ''),
     demos_taken: getFirstValue(teamStats, ['cumulative.demo.taken'], ''),
