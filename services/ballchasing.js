@@ -67,6 +67,70 @@ function getFirstValue(obj, paths, fallback = '') {
   return fallback;
 }
 
+function normalizeMetricKey(key) {
+  return String(key || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function findMetricByFuzzyKey(obj, matcher) {
+  if (!obj || typeof obj !== 'object') {
+    return undefined;
+  }
+
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === undefined || value === null) {
+      continue;
+    }
+    const normalized = normalizeMetricKey(key);
+    if (matcher(normalized)) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function getDistanceToTeammatesMetric(source) {
+  const exact = getFirstValue(
+    source,
+    [
+      'game_average.positioning.avg_distance_to_mates',
+      'game_average.positioning.avg_distance_to_teammates',
+      'game_average.positioning.avg_distance_to_team_mates',
+      'cumulative.positioning.avg_distance_to_mates',
+      'cumulative.positioning.avg_distance_to_teammates',
+      'cumulative.positioning.avg_distance_to_team_mates',
+    ],
+    undefined
+  );
+
+  if (exact !== undefined && exact !== null && exact !== '') {
+    return exact;
+  }
+
+  const isTeammatesDistanceMetric = (key) => {
+    const hasAverage = key.includes('avg') || key.includes('average');
+    const hasDistance = key.includes('dist') || key.includes('distance');
+    const hasTeammates = key.includes('teammate') || key.includes('teammate') || key.includes('mates') || key.includes('mate');
+    return hasAverage && hasDistance && hasTeammates;
+  };
+
+  const gameAveragePositioning = getPathValue(source, 'game_average.positioning');
+  const fromGameAverage = findMetricByFuzzyKey(gameAveragePositioning, isTeammatesDistanceMetric);
+  if (fromGameAverage !== undefined && fromGameAverage !== null && fromGameAverage !== '') {
+    return fromGameAverage;
+  }
+
+  const cumulativePositioning = getPathValue(source, 'cumulative.positioning');
+  const fromCumulative = findMetricByFuzzyKey(cumulativePositioning, isTeammatesDistanceMetric);
+  if (fromCumulative !== undefined && fromCumulative !== null && fromCumulative !== '') {
+    return fromCumulative;
+  }
+
+  return '';
+}
+
 function normalizeWeekLabel(week) {
   const raw = String(week || '').trim();
   if (!raw) {
@@ -126,6 +190,7 @@ function buildPlayerRow(match, player) {
     mvpr,
     series_played: 1,
     shooting_percentage: getFirstValue(player, ['cumulative.core.shooting_percentage'], ''),
+    highest_score: getFirstValue(player, ['game_highest.core.score', 'game_highest.score'], ''),
     bpm_per_game: getFirstValue(player, ['game_average.boost.bpm', 'cumulative.boost.bpm'], ''),
     avg_boost_amount_per_game: getFirstValue(player, ['game_average.boost.avg_amount', 'cumulative.boost.avg_amount'], ''),
     amount_collected: getFirstValue(player, ['cumulative.boost.amount_collected'], ''),
@@ -217,16 +282,7 @@ function buildPlayerRow(match, player) {
       ],
       ''
     ),
-    avg_distance_to_team_mates_per_game: getFirstValue(
-      player,
-      [
-        'game_average.positioning.avg_distance_to_mates',
-        'game_average.positioning.avg_distance_to_teammates',
-        'cumulative.positioning.avg_distance_to_mates',
-        'cumulative.positioning.avg_distance_to_teammates',
-      ],
-      ''
-    ),
+    avg_distance_to_team_mates_per_game: getDistanceToTeammatesMetric(player),
     demos_inflicted: getFirstValue(player, ['cumulative.demo.inflicted'], ''),
     demos_inflicted_per_game: getFirstValue(player, ['game_average.demo.inflicted'], ''),
     demos_taken: getFirstValue(player, ['cumulative.demo.taken'], ''),
@@ -383,16 +439,7 @@ function buildTeamRowFromTeamStats(teamName, teamStats) {
       ],
       ''
     ),
-    avg_distance_to_team_mates_per_game: getFirstValue(
-      teamStats,
-      [
-        'game_average.positioning.avg_distance_to_mates',
-        'game_average.positioning.avg_distance_to_teammates',
-        'cumulative.positioning.avg_distance_to_mates',
-        'cumulative.positioning.avg_distance_to_teammates',
-      ],
-      ''
-    ),
+    avg_distance_to_team_mates_per_game: getDistanceToTeammatesMetric(teamStats),
     demos_inflicted: getFirstValue(teamStats, ['cumulative.demo.inflicted'], ''),
     demos_inflicted_per_game: getFirstValue(teamStats, ['game_average.demo.inflicted'], ''),
     demos_taken: getFirstValue(teamStats, ['cumulative.demo.taken'], ''),
