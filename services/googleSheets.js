@@ -180,6 +180,10 @@ function parseMatchIdFromChannelTopic(topic) {
 
   const match = text.match(/(?:^|\|)match_id=([^|]+)/i);
   if (!match || !match[1]) {
+    // Support plain topic format where the topic is the raw match_id.
+    if (!text.includes('|')) {
+      return text;
+    }
     return '';
   }
 

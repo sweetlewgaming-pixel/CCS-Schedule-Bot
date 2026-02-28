@@ -21,7 +21,6 @@ const CHANNEL_ORIENTATION = 'AWAY_AT_HOME';
 const SEND_CHANNEL_BOOT_MESSAGE = true;
 const DELETE_DELAY_MS = 500;
 const CREATE_DELAY_MS = 500;
-const CHANNEL_TOPIC_PREFIX = 'ccs_scheduler_match';
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -163,9 +162,7 @@ async function applyRebuildPlan(guild, plan) {
 
   const createdNames = [];
   for (const spec of channelSpecs) {
-    const encodedMatchId = encodeURIComponent(String(spec.matchId || ''));
-    const encodedWeek = encodeURIComponent(String(spec.week || week || ''));
-    const topic = `${CHANNEL_TOPIC_PREFIX}|league=${league}|week=${encodedWeek}|match_id=${encodedMatchId}`;
+    const topic = String(spec.matchId || '').trim();
 
     const created = await guild.channels.create({
       name: spec.name,
