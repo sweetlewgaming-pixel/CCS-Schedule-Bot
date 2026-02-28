@@ -35,7 +35,7 @@ async function fetchBallchasingGroup(groupUrl) {
   }
 
   const data = await response.json();
-  const row = {
+  return {
     groupId,
     data,
   };
