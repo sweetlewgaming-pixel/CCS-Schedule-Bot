@@ -68,6 +68,15 @@ async function buildModAdminAlertMentions(guild) {
   return [...mentionIds].map((id) => `<@&${id}>`).join(' ');
 }
 
+async function notifyStaffUploadFailure(guild, channel, message) {
+  if (!channel) {
+    return;
+  }
+  const mentions = await buildModAdminAlertMentions(guild);
+  const prefix = mentions ? `${mentions} ` : '';
+  await channel.send(`${prefix}${message}`).catch(() => {});
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('upload_null')
@@ -130,8 +139,18 @@ module.exports = {
     } catch (error) {
       if (error?.code === 403 || error?.response?.status === 403) {
         await interaction.editReply('Google Sheets update failed: service account lacks edit permission on this league sheet.');
+        await notifyStaffUploadFailure(
+          interaction.guild,
+          interaction.channel,
+          `⚠️ /upload_null failed for ${match.awayTeam} at ${match.homeTeam}: Sheets permission denied (403).`
+        );
         return;
       }
+      await notifyStaffUploadFailure(
+        interaction.guild,
+        interaction.channel,
+        `⚠️ /upload_null failed for ${match.awayTeam} at ${match.homeTeam}. Error: ${error.message}`
+      );
       throw error;
     }
 
@@ -147,8 +166,18 @@ module.exports = {
     } catch (error) {
       if (error?.code === 403 || error?.response?.status === 403) {
         await interaction.editReply('Google Sheets update failed: service account lacks edit permission on this league sheet.');
+        await notifyStaffUploadFailure(
+          interaction.guild,
+          interaction.channel,
+          `⚠️ /upload_null failed for ${match.awayTeam} at ${match.homeTeam}: Sheets permission denied (403).`
+        );
         return;
       }
+      await notifyStaffUploadFailure(
+        interaction.guild,
+        interaction.channel,
+        `⚠️ /upload_null failed for ${match.awayTeam} at ${match.homeTeam}. Error: ${error.message}`
+      );
       throw error;
     }
 
