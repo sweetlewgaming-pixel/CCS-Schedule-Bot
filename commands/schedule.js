@@ -12,7 +12,12 @@ const {
   ChannelType,
 } = require('discord.js');
 
-const { getMatchesByWeek, getMatchByChannel, updateMatchDateTime } = require('../services/googleSheets');
+const {
+  getMatchesByWeek,
+  getMatchByChannel,
+  updateMatchDateTime,
+  updateMatchForfeitResult,
+} = require('../services/googleSheets');
 const { formatScheduleDate, formatScheduleTime } = require('../utils/formatDate');
 const { getRoleIdByTeamName } = require('../utils/teamRoles');
 const { slugifyTeamName } = require('../utils/slugify');
@@ -33,6 +38,12 @@ const LEAGUE_ANNOUNCEMENT_CHANNELS = {
   CAS: 'cas-game-times',
   CNL: 'cnl-game-times',
 };
+const LEAGUE_REPLAY_SUBMISSION_CHANNELS = {
+  CCS: 'ccs-replay-submission',
+  CPL: 'cpl-replay-submission',
+  CAS: 'cas-replay-submission',
+  CNL: 'cnl-replay-submission',
+};
 const LEAGUE_SCHEDULING_CATEGORIES = {
   CCS: 'CCS SCHEDULING',
   CPL: 'CPL SCHEDULING',
@@ -42,8 +53,13 @@ const LEAGUE_SCHEDULING_CATEGORIES = {
 const CONFIRMED_CHANNEL_SUFFIX = '✅';
 const CONFIRMED_CHANNEL_FALLBACK_SUFFIX = 'confirmed';
 const OVERWRITE_BUTTON_PREFIX = 'schedule:overwrite';
+const OPEN_MODAL_BUTTON_PREFIX = 'schedule:openmodal';
+const FORFEIT_SELECT_BUTTON_PREFIX = 'schedule:forfeitselect';
+const FORFEIT_CONFIRM_BUTTON_PREFIX = 'schedule:forfeitconfirm';
 const OVERWRITE_CACHE_TTL_MS = 10 * 60 * 1000;
+const FORFEIT_CONFIRM_CACHE_TTL_MS = 10 * 60 * 1000;
 const pendingOverwrites = new Map();
+const pendingForfeitConfirms = new Map();
 
 function buildLeagueRow() {
   const leagueMenu = new StringSelectMenuBuilder()
@@ -116,6 +132,103 @@ function buildScheduleModal(league, week, matchId) {
   return modal;
 }
 
+function encodeMatchId(matchId) {
+  return encodeURIComponent(String(matchId || '').trim());
+}
+
+function decodeMatchId(encoded) {
+  return decodeURIComponent(String(encoded || ''));
+}
+
+function buildMatchActionRows(league, week, match) {
+  const encodedMatchId = encodeMatchId(match.matchId);
+  const scheduleButton = new ButtonBuilder()
+    .setCustomId(`${OPEN_MODAL_BUTTON_PREFIX}:${league}:${week}:${encodedMatchId}`)
+    .setStyle(ButtonStyle.Primary)
+    .setLabel('Set Date/Time');
+
+  const recordForfeitButton = new ButtonBuilder()
+    .setCustomId(`${FORFEIT_SELECT_BUTTON_PREFIX}:${league}:${week}:${encodedMatchId}`)
+    .setStyle(ButtonStyle.Danger)
+    .setLabel('Record Forfeit')
+    .setDisabled(!match.homeTeam || !match.awayTeam);
+
+  return [new ActionRowBuilder().addComponents(scheduleButton, recordForfeitButton)];
+}
+
+function buildForfeitSelectionRows(league, week, match) {
+  const encodedMatchId = encodeMatchId(match.matchId);
+  const awayForfeitedButton = new ButtonBuilder()
+    .setCustomId(`${FORFEIT_SELECT_BUTTON_PREFIX}:${league}:${week}:${encodedMatchId}:A`)
+    .setStyle(ButtonStyle.Secondary)
+    .setLabel(`${match.awayTeam} Forfeited`);
+
+  const homeForfeitedButton = new ButtonBuilder()
+    .setCustomId(`${FORFEIT_SELECT_BUTTON_PREFIX}:${league}:${week}:${encodedMatchId}:H`)
+    .setStyle(ButtonStyle.Secondary)
+    .setLabel(`${match.homeTeam} Forfeited`);
+
+  const cancelButton = new ButtonBuilder()
+    .setCustomId(`${FORFEIT_SELECT_BUTTON_PREFIX}:cancel`)
+    .setStyle(ButtonStyle.Secondary)
+    .setLabel('Cancel');
+
+  return [new ActionRowBuilder().addComponents(awayForfeitedButton, homeForfeitedButton, cancelButton)];
+}
+
+function cleanupExpiredForfeitConfirms() {
+  const now = Date.now();
+  for (const [token, data] of pendingForfeitConfirms.entries()) {
+    if (data.expiresAt <= now) {
+      pendingForfeitConfirms.delete(token);
+    }
+  }
+}
+
+function createForfeitConfirmToken(payload) {
+  cleanupExpiredForfeitConfirms();
+  const token = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  pendingForfeitConfirms.set(token, {
+    ...payload,
+    expiresAt: Date.now() + FORFEIT_CONFIRM_CACHE_TTL_MS,
+  });
+  return token;
+}
+
+function buildForfeitConfirmRow(token) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${FORFEIT_CONFIRM_BUTTON_PREFIX}:confirm:${token}`)
+      .setStyle(ButtonStyle.Danger)
+      .setLabel('Confirm Forfeit'),
+    new ButtonBuilder()
+      .setCustomId(`${FORFEIT_CONFIRM_BUTTON_PREFIX}:cancel:${token}`)
+      .setStyle(ButtonStyle.Secondary)
+      .setLabel('Cancel')
+  );
+}
+
+function parseForfeitConfirmButton(customId) {
+  if (!customId.startsWith(`${FORFEIT_CONFIRM_BUTTON_PREFIX}:`)) {
+    return null;
+  }
+
+  const parts = customId.split(':');
+  if (parts.length !== 4) {
+    return null;
+  }
+
+  return {
+    action: parts[2],
+    token: parts[3],
+  };
+}
+
+async function getMatchById(league, week, matchId) {
+  const matches = await getMatchesByWeek(league, week);
+  return matches.find((match) => match.matchId === matchId) || null;
+}
+
 function parseCustomId(customId, prefix) {
   if (!customId.startsWith(prefix)) {
     return null;
@@ -161,6 +274,20 @@ async function mentionForTeam(guild, teamName) {
 
 async function resolveAnnouncementChannel(interaction, league) {
   const desiredName = LEAGUE_ANNOUNCEMENT_CHANNELS[league];
+  if (!interaction.guild || !desiredName) {
+    return interaction.channel;
+  }
+
+  await interaction.guild.channels.fetch();
+  const match = interaction.guild.channels.cache.find(
+    (channel) => channel.name === desiredName && channel.isTextBased()
+  );
+
+  return match || interaction.channel;
+}
+
+async function resolveReplaySubmissionChannel(interaction, league) {
+  const desiredName = LEAGUE_REPLAY_SUBMISSION_CHANNELS[league];
   if (!interaction.guild || !desiredName) {
     return interaction.channel;
   }
@@ -316,6 +443,34 @@ async function publishScheduleResult(interaction, league, week, time, date, matc
   }
 }
 
+async function publishForfeitResult(interaction, league, match, winnerCode) {
+  const { homeTeam, awayTeam } = match;
+  const winnerTeam = winnerCode === 'A' ? awayTeam : homeTeam;
+
+  const output = `${homeTeam} vs ${awayTeam}\nFORFEIT RESULT: ${winnerTeam} wins by FF`;
+  const targetChannel = await resolveReplaySubmissionChannel(interaction, league);
+  if (targetChannel) {
+    await targetChannel.send(output);
+  }
+
+  const matchupChannel = await findMatchupChannelForMatch(interaction.guild, league, homeTeam, awayTeam);
+  if (matchupChannel) {
+    try {
+      await markChannelAsConfirmed(matchupChannel);
+      await matchupChannel.send(`✅ **Forfeit recorded:** ${winnerTeam} wins by FF.`);
+    } catch (error) {
+      console.error('Failed to mark matchup channel as confirmed for forfeit:', error);
+    }
+  } else if (interaction.channel) {
+    try {
+      await markChannelAsConfirmed(interaction.channel);
+      await interaction.channel.send(`✅ **Forfeit recorded:** ${winnerTeam} wins by FF.`);
+    } catch (error) {
+      console.error('Failed to mark channel as confirmed for forfeit:', error);
+    }
+  }
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('schedule')
@@ -336,7 +491,11 @@ module.exports = {
       const inferredMatch = await getMatchByChannel(inferredLeague, interaction.channel.name);
       if (inferredMatch) {
         const week = normalizeWeekValue(inferredMatch.week);
-        await interaction.showModal(buildScheduleModal(inferredLeague, week, inferredMatch.matchId));
+        await interaction.reply({
+          content: `${inferredMatch.homeTeam} vs ${inferredMatch.awayTeam}\nChoose an action:`,
+          components: buildMatchActionRows(inferredLeague, week, inferredMatch),
+          flags: MessageFlags.Ephemeral,
+        });
         return;
       }
     }
@@ -385,7 +544,20 @@ module.exports = {
       const league = matchParts[2];
       const week = matchParts[3];
       const matchId = interaction.values[0];
-      await interaction.showModal(buildScheduleModal(league, week, matchId));
+      const matches = await getMatchesByWeek(league, week);
+      const selected = matches.find((match) => match.matchId === matchId);
+      if (!selected) {
+        await interaction.update({
+          content: 'Could not load match details. Please try /schedule again.',
+          components: [],
+        });
+        return;
+      }
+
+      await interaction.update({
+        content: `${selected.homeTeam} vs ${selected.awayTeam}\nChoose an action:`,
+        components: buildMatchActionRows(league, week, selected),
+      });
     }
   },
 
@@ -440,6 +612,7 @@ module.exports = {
 
     if (updateResult.duplicate) {
       const token = createOverwriteToken({
+        mode: 'schedule_time',
         userId: interaction.user.id,
         guildId: interaction.guildId,
         channelId: interaction.channelId,
@@ -464,8 +637,169 @@ module.exports = {
     await publishScheduleResult(interaction, league, week, time, date, updateResult.match);
     await interaction.reply({ content: '\u2705 Match scheduled successfully', flags: MessageFlags.Ephemeral });
   },
-
   async handleButtonInteraction(interaction) {
+    if (interaction.customId.startsWith(`${OPEN_MODAL_BUTTON_PREFIX}:`)) {
+      const parts = interaction.customId.split(':');
+      if (parts.length < 5) {
+        return;
+      }
+      const league = parts[2];
+      const week = parts[3];
+      const matchId = decodeMatchId(parts.slice(4).join(':'));
+      await interaction.showModal(buildScheduleModal(league, week, matchId));
+      return;
+    }
+
+    if (interaction.customId === `${FORFEIT_SELECT_BUTTON_PREFIX}:cancel`) {
+      await interaction.update({
+        content: 'Forfeit flow canceled.',
+        components: [],
+      });
+      return;
+    }
+
+    if (interaction.customId.startsWith(`${FORFEIT_SELECT_BUTTON_PREFIX}:`)) {
+      const parts = interaction.customId.split(':');
+      if (parts.length < 5) {
+        return;
+      }
+
+      const league = parts[2];
+      const week = parts[3];
+      const lastPart = String(parts[parts.length - 1] || '').toUpperCase();
+
+      if (parts.length === 5) {
+        const matchId = decodeMatchId(parts.slice(4).join(':'));
+        const match = await getMatchById(league, week, matchId);
+        if (!match) {
+          await interaction.update({
+            content: 'Could not load match details. Please try /schedule again.',
+            components: [],
+          });
+          return;
+        }
+
+        await interaction.update({
+          content: `${match.homeTeam} vs ${match.awayTeam}\nWhich team forfeited?`,
+          components: buildForfeitSelectionRows(league, week, match),
+        });
+        return;
+      }
+
+      if (!['A', 'H'].includes(lastPart)) {
+        return;
+      }
+
+      const matchId = decodeMatchId(parts.slice(4, parts.length - 1).join(':'));
+      const match = await getMatchById(league, week, matchId);
+      if (!match) {
+        await interaction.update({
+          content: 'Could not load match details. Please try /schedule again.',
+          components: [],
+        });
+        return;
+      }
+
+      const forfeitedSide = lastPart; // A=away forfeited, H=home forfeited.
+      const winnerCode = forfeitedSide === 'A' ? 'H' : 'A';
+      const forfeitedTeam = forfeitedSide === 'A' ? match.awayTeam : match.homeTeam;
+      const winnerTeam = winnerCode === 'A' ? match.awayTeam : match.homeTeam;
+      const token = createForfeitConfirmToken({
+        userId: interaction.user.id,
+        guildId: interaction.guildId,
+        channelId: interaction.channelId,
+        league,
+        week,
+        matchId,
+        winnerCode,
+      });
+
+      await interaction.update({
+        content: `${forfeitedTeam} forfeited.\nWinner will be: **${winnerTeam}** (${winnerCode} FF).\nConfirm before submitting:`,
+        components: [buildForfeitConfirmRow(token)],
+      });
+      return;
+    }
+
+    const forfeitConfirm = parseForfeitConfirmButton(interaction.customId);
+    if (forfeitConfirm) {
+      const pending = pendingForfeitConfirms.get(forfeitConfirm.token);
+      if (!pending || pending.expiresAt <= Date.now()) {
+        pendingForfeitConfirms.delete(forfeitConfirm.token);
+        await interaction.reply({
+          content: 'Forfeit confirmation expired. Please run /schedule again.',
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      if (interaction.user.id !== pending.userId) {
+        await interaction.reply({
+          content: 'Only the admin who started this forfeit flow can confirm it.',
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      if (forfeitConfirm.action === 'cancel') {
+        pendingForfeitConfirms.delete(forfeitConfirm.token);
+        await interaction.update({
+          content: 'Forfeit submission canceled.',
+          components: [],
+        });
+        return;
+      }
+
+      if (forfeitConfirm.action !== 'confirm') {
+        return;
+      }
+
+      let result;
+      try {
+        result = await updateMatchForfeitResult(pending.league, pending.matchId, pending.winnerCode, {
+          preventDuplicate: true,
+        });
+      } catch (error) {
+        if (error?.code === 403 || error?.response?.status === 403) {
+          await interaction.reply({
+            content:
+              'Google Sheets update failed: service account lacks edit permission on this league sheet. Share the spreadsheet with GOOGLE_CLIENT_EMAIL as Editor.',
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+        throw error;
+      }
+
+      if (result.duplicate) {
+        const token = createOverwriteToken({
+          mode: 'forfeit',
+          userId: interaction.user.id,
+          guildId: interaction.guildId,
+          channelId: interaction.channelId,
+          league: pending.league,
+          week: pending.week,
+          matchId: pending.matchId,
+          winnerCode: pending.winnerCode,
+        });
+        pendingForfeitConfirms.delete(forfeitConfirm.token);
+
+        await interaction.update({
+          content: `This match already has a Ballchasing value (${result.existingValue}). Are you sure you want to overwrite it with ${pending.winnerCode} FF?`,
+          components: [buildOverwriteRow(token)],
+        });
+        return;
+      }
+
+      pendingForfeitConfirms.delete(forfeitConfirm.token);
+      await publishForfeitResult(interaction, pending.league, result.match, pending.winnerCode);
+      await interaction.update({
+        content: `? Forfeit recorded successfully (${pending.winnerCode} FF).`,
+        components: [],
+      });
+      return;
+    }
+
     const parsed = parseOverwriteButton(interaction.customId);
     if (!parsed) {
       return;
@@ -508,23 +842,32 @@ module.exports = {
     });
 
     try {
-      const updateResult = await updateMatchDateTime(pending.league, pending.matchId, pending.date, pending.time, {
-        preventDuplicate: false,
-      });
+      if (pending.mode === 'forfeit') {
+        const result = await updateMatchForfeitResult(pending.league, pending.matchId, pending.winnerCode, {
+          preventDuplicate: false,
+        });
+        await publishForfeitResult(interaction, pending.league, result.match, pending.winnerCode);
+      } else {
+        const updateResult = await updateMatchDateTime(pending.league, pending.matchId, pending.date, pending.time, {
+          preventDuplicate: false,
+        });
 
-      await publishScheduleResult(
-        interaction,
-        pending.league,
-        pending.week,
-        pending.time,
-        pending.date,
-        updateResult.match
-      );
+        await publishScheduleResult(
+          interaction,
+          pending.league,
+          pending.week,
+          pending.time,
+          pending.date,
+          updateResult.match
+        );
+      }
+
       pendingOverwrites.delete(parsed.token);
-      await interaction.editReply('\u2705 Match schedule overwritten successfully');
+      await interaction.editReply('? Match result overwritten successfully');
     } catch (error) {
       console.error('Failed overwrite scheduling:', error);
-      await interaction.editReply('Failed to overwrite schedule. Please try again.');
+      await interaction.editReply('Failed to overwrite match result. Please try again.');
     }
   },
 };
+

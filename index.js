@@ -7,6 +7,8 @@ const requestCommand = require('./commands/request');
 const suggestTimesCommand = require('./commands/suggest_times');
 const uploadCommand = require('./commands/upload');
 const uploadNullCommand = require('./commands/upload_null');
+const availabilityCommand = require('./commands/availability');
+const availabilityAdminCommand = require('./commands/availability_admin');
 
 const requiredEnv = ['DISCORD_TOKEN', 'CLIENT_ID', 'GOOGLE_CLIENT_EMAIL', 'GOOGLE_PRIVATE_KEY'];
 const missingEnv = requiredEnv.filter((key) => !process.env[key]);
@@ -25,13 +27,21 @@ client.commands.set(requestCommand.data.name, requestCommand);
 client.commands.set(suggestTimesCommand.data.name, suggestTimesCommand);
 client.commands.set(uploadCommand.data.name, uploadCommand);
 client.commands.set(uploadNullCommand.data.name, uploadNullCommand);
+client.commands.set(availabilityCommand.data.name, availabilityCommand);
+client.commands.set(availabilityAdminCommand.data.name, availabilityAdminCommand);
 
 async function registerSlashCommands() {
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
   const commands = [...client.commands.values()].map((command) => command.data.toJSON());
 
+  if (process.env.GUILD_ID) {
+    await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID), { body: commands });
+    console.log(`Registered ${commands.length} guild command(s) for ${process.env.GUILD_ID}.`);
+    return;
+  }
+
   await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
-  console.log(`Registered ${commands.length} application command(s).`);
+  console.log(`Registered ${commands.length} global application command(s).`);
 }
 
 client.once(Events.ClientReady, async (readyClient) => {
@@ -55,11 +65,43 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isStringSelectMenu()) {
+      if (availabilityCommand.handleSelectMenu) {
+        await availabilityCommand.handleSelectMenu(interaction);
+      }
+
+      if (interaction.deferred || interaction.replied) {
+        return;
+      }
+
+      if (availabilityAdminCommand.handleSelectMenu) {
+        await availabilityAdminCommand.handleSelectMenu(interaction);
+      }
+
+      if (interaction.deferred || interaction.replied) {
+        return;
+      }
+
       await scheduleCommand.handleSelectMenu(interaction);
       return;
     }
 
     if (interaction.isButton()) {
+      if (availabilityCommand.handleButtonInteraction) {
+        await availabilityCommand.handleButtonInteraction(interaction);
+      }
+
+      if (interaction.deferred || interaction.replied) {
+        return;
+      }
+
+      if (availabilityAdminCommand.handleButtonInteraction) {
+        await availabilityAdminCommand.handleButtonInteraction(interaction);
+      }
+
+      if (interaction.deferred || interaction.replied) {
+        return;
+      }
+
       if (scheduleCommand.handleButtonInteraction) {
         await scheduleCommand.handleButtonInteraction(interaction);
       }
@@ -83,6 +125,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isModalSubmit()) {
+      if (availabilityCommand.handleModalSubmit) {
+        await availabilityCommand.handleModalSubmit(interaction);
+      }
+
+      if (interaction.deferred || interaction.replied) {
+        return;
+      }
+
+      if (availabilityAdminCommand.handleModalSubmit) {
+        await availabilityAdminCommand.handleModalSubmit(interaction);
+      }
+
+      if (interaction.deferred || interaction.replied) {
+        return;
+      }
+
       await scheduleCommand.handleModalSubmit(interaction);
     }
   } catch (error) {

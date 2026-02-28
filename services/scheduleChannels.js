@@ -26,6 +26,30 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function getAvailabilityCommandMention(guild) {
+  try {
+    if (guild?.commands?.fetch) {
+      const guildCommands = await guild.commands.fetch();
+      const guildCommand = guildCommands.find((command) => command.name === 'availability');
+      if (guildCommand) {
+        return `</availability:${guildCommand.id}>`;
+      }
+    }
+
+    if (guild?.client?.application?.commands?.fetch) {
+      const globalCommands = await guild.client.application.commands.fetch();
+      const globalCommand = globalCommands.find((command) => command.name === 'availability');
+      if (globalCommand) {
+        return `</availability:${globalCommand.id}>`;
+      }
+    }
+  } catch (error) {
+    // Fall back to plain command text if command mention lookup fails.
+  }
+
+  return '`/availability`';
+}
+
 function buildChannelName(match) {
   const teamA = CHANNEL_ORIENTATION === 'AWAY_AT_HOME' ? match.awayTeam : match.homeTeam;
   const teamB = CHANNEL_ORIENTATION === 'AWAY_AT_HOME' ? match.homeTeam : match.awayTeam;
@@ -147,9 +171,10 @@ async function applyRebuildPlan(guild, plan) {
       const roleBId = await getRoleIdByTeamName(guild, spec.teamB);
       const mentionA = roleAId ? `<@&${roleAId}>` : `@${spec.teamA}`;
       const mentionB = roleBId ? `<@&${roleBId}>` : `@${spec.teamB}`;
+      const availabilityCommandMention = await getAvailabilityCommandMention(guild);
 
       await created.send(
-        `${mentionA} ${mentionB}\n\nPlease put your schedule in this format for this week\n\nTues: Time-Time\nWed: Time-Time\nThurs: Time-Time\nFri: Time-Time\nSat: Time-Time\nSun: Time-Time\n\nALL IN EST PLEASE`
+        `${mentionA} ${mentionB}\n\nPlease put your schedule in this format for this week:\n\nTues: Time-Time\nWed: Time-Time\nThurs: Time-Time\nFri: Time-Time\nSat: Time-Time\nSun: Time-Time\n\nALL IN EST PLEASE\n\n**Please use ${availabilityCommandMention} to make your schedule. This massively helps out the admin team and would be greatly appreciated!**`
       );
     }
 

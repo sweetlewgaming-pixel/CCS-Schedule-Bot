@@ -308,9 +308,80 @@ async function updateMatchBallchasingLink(league, matchId, link, options = {}) {
   };
 }
 
+async function updateMatchForfeitResult(league, matchId, winnerCode, options = {}) {
+  const normalizedWinner = String(winnerCode || '').trim().toUpperCase();
+  if (!['A', 'H'].includes(normalizedWinner)) {
+    throw new Error('winnerCode must be "A" (away) or "H" (home).');
+  }
+
+  const valueToWrite = `${normalizedWinner} FF`;
+  const { headers, rows, spreadsheetId } = await getRawScheduleRows(league);
+  const linkColIndex = findBallchasingColumnIndex(headers);
+  if (linkColIndex === 0) {
+    throw new Error(
+      'Ballchasing column not found in RawSchedule. Add a header like "ballchasing_link" or set BALLCHASING_COLUMN_HEADER.'
+    );
+  }
+
+  const target = rows.find(({ rowData }) => String(rowData.match_id || '').trim() === String(matchId).trim());
+  if (!target) {
+    throw new Error(`match_id not found: ${matchId}`);
+  }
+
+  const existingValue = String(
+    target.rowData.ballchasing_link ||
+      target.rowData.ballchasing ||
+      target.rowData.ballchasing_url ||
+      target.rowData.replay_link ||
+      target.rowData.replay_url ||
+      ''
+  ).trim();
+
+  if (options.preventDuplicate && hasMeaningfulScheduleValue(existingValue)) {
+    return {
+      duplicate: true,
+      existingValue,
+      match: {
+        homeTeam: String(target.rowData.home_team || '').trim(),
+        awayTeam: String(target.rowData.away_team || '').trim(),
+        week: String(target.rowData.week || '').trim(),
+        matchId: String(target.rowData.match_id || '').trim(),
+      },
+    };
+  }
+
+  const sheets = getSheetsClient();
+  const rowIndex = target.rowIndex;
+  const colLetter = colNumberToLetter(linkColIndex);
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      valueInputOption: 'USER_ENTERED',
+      data: [
+        {
+          range: `${SHEET_NAME}!${colLetter}${rowIndex}`,
+          values: [[valueToWrite]],
+        },
+      ],
+    },
+  });
+
+  return {
+    duplicate: false,
+    valueWritten: valueToWrite,
+    match: {
+      homeTeam: String(target.rowData.home_team || '').trim(),
+      awayTeam: String(target.rowData.away_team || '').trim(),
+      week: String(target.rowData.week || '').trim(),
+      matchId: String(target.rowData.match_id || '').trim(),
+    },
+  };
+}
+
 module.exports = {
   getMatchesByWeek,
   getMatchByChannel,
   updateMatchDateTime,
   updateMatchBallchasingLink,
+  updateMatchForfeitResult,
 };
