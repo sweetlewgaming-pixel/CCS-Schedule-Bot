@@ -1,7 +1,13 @@
 const { ChannelType, MessageFlags, SlashCommandBuilder } = require('discord.js');
 
 const { isAdminAuthorized } = require('../utils/permissions');
-const { getMatchByChannel, updateMatchBallchasingLink } = require('../services/googleSheets');
+const {
+  getMatchByChannel,
+  updateMatchBallchasingLink,
+  appendPlayerInputRows,
+  appendTeamInputRows,
+} = require('../services/googleSheets');
+const { fetchBallchasingGroup, buildBallchasingPlayerRows, buildBallchasingTeamRows } = require('../services/ballchasing');
 
 const LEAGUE_SCHEDULING_CATEGORIES = {
   CCS: 'CCS SCHEDULING',
@@ -81,9 +87,12 @@ module.exports = {
       return;
     }
 
-    let updateResult;
+    let duplicateCheckResult;
     try {
-      updateResult = await updateMatchBallchasingLink(league, match.matchId, link, { preventDuplicate: true });
+      duplicateCheckResult = await updateMatchBallchasingLink(league, match.matchId, link, {
+        preventDuplicate: true,
+        dryRun: true,
+      });
     } catch (error) {
       if (error?.code === 403 || error?.response?.status === 403) {
         await interaction.reply({
@@ -95,16 +104,48 @@ module.exports = {
       throw error;
     }
 
-    if (updateResult.duplicate) {
+    if (duplicateCheckResult.duplicate) {
       await interaction.reply({
-        content: `A ballchasing link is already saved for this match and cannot be replaced.\nCurrent: ${updateResult.existingLink}`,
+        content: `A ballchasing link is already saved for this match and cannot be replaced.\nCurrent: ${duplicateCheckResult.existingLink}`,
         flags: MessageFlags.Ephemeral,
       });
       return;
     }
 
+    let appendPlayerResult;
+    let appendTeamResult;
+    try {
+      const group = await fetchBallchasingGroup(link);
+      const playerRows = buildBallchasingPlayerRows(match, group.data);
+      const teamRows = buildBallchasingTeamRows(group.data, playerRows);
+      appendPlayerResult = await appendPlayerInputRows(league, playerRows);
+      appendTeamResult = await appendTeamInputRows(league, teamRows);
+    } catch (error) {
+      await interaction.reply({
+        content: `Failed to import ballchasing raw stats: ${error.message}`,
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    try {
+      await updateMatchBallchasingLink(league, match.matchId, link, { preventDuplicate: false });
+    } catch (error) {
+      if (error?.code === 403 || error?.response?.status === 403) {
+        await interaction.reply({
+          content: 'Google Sheets update failed: service account lacks edit permission on this league sheet.',
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+      throw error;
+    }
+
     await interaction.reply({
-      content: '✅ Ballchasing group link uploaded to sheet only.',
+      content:
+        `✅ Ballchasing group link uploaded to sheet only.\n` +
+        `✅ Imported ${appendPlayerResult.insertedRows} player row(s) into ${appendPlayerResult.sheetName}.\n` +
+        `✅ Imported ${appendTeamResult.insertedRows} team row(s) into ${appendTeamResult.sheetName}.`,
       flags: MessageFlags.Ephemeral,
     });
   },

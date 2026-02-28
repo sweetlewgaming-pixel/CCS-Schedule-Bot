@@ -9,6 +9,7 @@ const uploadCommand = require('./commands/upload');
 const uploadNullCommand = require('./commands/upload_null');
 const availabilityCommand = require('./commands/availability');
 const availabilityAdminCommand = require('./commands/availability_admin');
+const helpCommand = require('./commands/help');
 
 const requiredEnv = ['DISCORD_TOKEN', 'CLIENT_ID', 'GOOGLE_CLIENT_EMAIL', 'GOOGLE_PRIVATE_KEY'];
 const missingEnv = requiredEnv.filter((key) => !process.env[key]);
@@ -29,6 +30,7 @@ client.commands.set(uploadCommand.data.name, uploadCommand);
 client.commands.set(uploadNullCommand.data.name, uploadNullCommand);
 client.commands.set(availabilityCommand.data.name, availabilityCommand);
 client.commands.set(availabilityAdminCommand.data.name, availabilityAdminCommand);
+client.commands.set(helpCommand.data.name, helpCommand);
 
 async function registerSlashCommands() {
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);

@@ -9,6 +9,14 @@ const SPREADSHEET_IDS = {
 };
 
 const SHEET_NAME = 'RawSchedule';
+const STATS_SHEET_NAME = process.env.STATS_SHEET_NAME || 'PlayerInput';
+const TEAM_STATS_SHEET_NAME = process.env.TEAM_STATS_SHEET_NAME || 'TeamInput';
+const STATS_SPREADSHEET_IDS = {
+  CCS: process.env.CCS_STATS_SHEET_ID || SPREADSHEET_IDS.CCS,
+  CPL: process.env.CPL_STATS_SHEET_ID || SPREADSHEET_IDS.CPL,
+  CAS: process.env.CAS_STATS_SHEET_ID || SPREADSHEET_IDS.CAS,
+  CNL: process.env.CNL_STATS_SHEET_ID || SPREADSHEET_IDS.CNL,
+};
 
 function getSheetsClient() {
   const auth = new google.auth.JWT({
@@ -38,6 +46,10 @@ function colNumberToLetter(colNumber) {
   }
 
   return result;
+}
+
+function getStatsSpreadsheetId(league) {
+  return STATS_SPREADSHEET_IDS[league];
 }
 
 async function getRawScheduleRows(league) {
@@ -280,6 +292,18 @@ async function updateMatchBallchasingLink(league, matchId, link, options = {}) {
     };
   }
 
+  if (options.dryRun) {
+    return {
+      duplicate: false,
+      match: {
+        homeTeam: String(target.rowData.home_team || '').trim(),
+        awayTeam: String(target.rowData.away_team || '').trim(),
+        week: String(target.rowData.week || '').trim(),
+        matchId: String(target.rowData.match_id || '').trim(),
+      },
+    };
+  }
+
   const sheets = getSheetsClient();
   const rowIndex = target.rowIndex;
   const linkColLetter = colNumberToLetter(linkColIndex);
@@ -305,6 +329,71 @@ async function updateMatchBallchasingLink(league, matchId, link, options = {}) {
       week: String(target.rowData.week || '').trim(),
       matchId: String(target.rowData.match_id || '').trim(),
     },
+  };
+}
+
+async function appendPlayerInputRows(league, playerRows) {
+  return appendStatsRows(league, STATS_SHEET_NAME, playerRows);
+}
+
+async function appendTeamInputRows(league, teamRows) {
+  return appendStatsRows(league, TEAM_STATS_SHEET_NAME, teamRows);
+}
+
+async function appendStatsRows(league, sheetName, rowsToAppend) {
+  const spreadsheetId = getStatsSpreadsheetId(league);
+  if (!spreadsheetId) {
+    throw new Error(`Stats spreadsheet is not configured for league ${league}.`);
+  }
+
+  if (!Array.isArray(rowsToAppend) || rowsToAppend.length === 0) {
+    return { insertedRows: 0, insertedPlayers: 0, startRow: 0 };
+  }
+
+  const sheets = getSheetsClient();
+  const headerResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${sheetName}!1:1`,
+  });
+  const headers = headerResponse.data.values?.[0] || [];
+  if (!headers.length) {
+    throw new Error(`No header row found in ${sheetName}.`);
+  }
+
+  const normalizedHeaders = headers.map(normalizeHeader);
+  const colAResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${sheetName}!A:A`,
+  });
+  const colAValues = colAResponse.data.values || [];
+  const lastUsedRow = colAValues.length;
+  const startRow = lastUsedRow + 1;
+
+  const block = [headers];
+  for (const row of rowsToAppend) {
+    block.push(
+      normalizedHeaders.map((header) => {
+        const value = row[header];
+        return value === undefined || value === null ? '' : value;
+      })
+    );
+  }
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${sheetName}!A${startRow}`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: {
+      values: block,
+    },
+  });
+
+  return {
+    insertedRows: rowsToAppend.length,
+    insertedPlayers: rowsToAppend.length,
+    startRow,
+    endRow: startRow + block.length - 1,
+    sheetName,
   };
 }
 
@@ -384,4 +473,6 @@ module.exports = {
   updateMatchDateTime,
   updateMatchBallchasingLink,
   updateMatchForfeitResult,
+  appendPlayerInputRows,
+  appendTeamInputRows,
 };
