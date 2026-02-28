@@ -354,14 +354,20 @@ async function updateMatchBallchasingLink(league, matchId, link, options = {}) {
 }
 
 async function appendPlayerInputRows(league, playerRows) {
-  return appendStatsRows(league, STATS_SHEET_NAME, playerRows);
+  return appendStatsRows(league, STATS_SHEET_NAME, playerRows, {
+    includeHeaderRow: true,
+    includeSpacerRow: true,
+  });
 }
 
 async function appendTeamInputRows(league, teamRows) {
-  return appendStatsRows(league, TEAM_STATS_SHEET_NAME, teamRows);
+  return appendStatsRows(league, TEAM_STATS_SHEET_NAME, teamRows, {
+    includeHeaderRow: true,
+    includeSpacerRow: true,
+  });
 }
 
-async function appendStatsRows(league, sheetName, rowsToAppend) {
+async function appendStatsRows(league, sheetName, rowsToAppend, options = {}) {
   const spreadsheetId = getStatsSpreadsheetId(league);
   if (!spreadsheetId) {
     throw new Error(`Stats spreadsheet is not configured for league ${league}.`);
@@ -370,6 +376,9 @@ async function appendStatsRows(league, sheetName, rowsToAppend) {
   if (!Array.isArray(rowsToAppend) || rowsToAppend.length === 0) {
     return { insertedRows: 0, insertedPlayers: 0, startRow: 0 };
   }
+
+  const includeHeaderRow = options.includeHeaderRow !== false;
+  const includeSpacerRow = options.includeSpacerRow !== false;
 
   const sheets = getSheetsClient();
   const headerResponse = await sheets.spreadsheets.values.get({
@@ -383,6 +392,12 @@ async function appendStatsRows(league, sheetName, rowsToAppend) {
 
   const normalizedHeaders = headers.map(normalizeHeader);
   const values = [];
+  if (includeSpacerRow) {
+    values.push(['']);
+  }
+  if (includeHeaderRow) {
+    values.push(headers);
+  }
   for (const row of rowsToAppend) {
     values.push(
       normalizedHeaders.map((header) => {
