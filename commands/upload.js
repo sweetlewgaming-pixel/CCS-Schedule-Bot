@@ -74,6 +74,38 @@ async function isTeamMember(interaction, homeTeam, awayTeam) {
   return Boolean((homeRoleId && memberRoles.has(homeRoleId)) || (awayRoleId && memberRoles.has(awayRoleId)));
 }
 
+function normalizeRoleName(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '');
+}
+
+async function buildModAdminAlertMentions(guild) {
+  if (!guild) {
+    return '';
+  }
+
+  if (!guild.roles.cache.size) {
+    await guild.roles.fetch();
+  }
+
+  const mentionIds = new Set();
+  const adminRoleId = String(process.env.ADMIN_ROLE_ID || '').trim();
+  if (adminRoleId && guild.roles.cache.has(adminRoleId)) {
+    mentionIds.add(adminRoleId);
+  }
+
+  for (const role of guild.roles.cache.values()) {
+    const normalized = normalizeRoleName(role.name);
+    if (normalized === 'mods' || normalized === 'moderator' || normalized === 'moderators' || normalized === 'admin' || normalized === 'admins') {
+      mentionIds.add(role.id);
+    }
+  }
+
+  return [...mentionIds].map((id) => `<@&${id}>`).join(' ');
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('upload')
@@ -179,18 +211,14 @@ module.exports = {
         const teamRows = buildBallchasingTeamRows(group.data, playerRows);
         const appendPlayerResult = await appendPlayerInputRows(league, playerRows);
         const appendTeamResult = await appendTeamInputRows(league, teamRows);
-        await interaction.followUp({
-          content:
-            `✅ Finished raw stats import.\n` +
-            `✅ Imported ${appendPlayerResult.insertedRows} player row(s) into ${appendPlayerResult.sheetName}.\n` +
-            `✅ Imported ${appendTeamResult.insertedRows} team row(s) into ${appendTeamResult.sheetName}.`,
-          flags: MessageFlags.Ephemeral,
-        });
       } catch (error) {
-        await interaction.followUp({
-          content: `⚠️ Link was saved, but raw stats import failed: ${error.message}`,
-          flags: MessageFlags.Ephemeral,
-        });
+        const modAdminMentions = await buildModAdminAlertMentions(interaction.guild);
+        const alertPrefix = modAdminMentions ? `${modAdminMentions} ` : '';
+        await interaction.channel
+          .send(
+            `${alertPrefix}⚠️ Ballchasing link was saved, but raw stats import failed for ${match.awayTeam} at ${match.homeTeam}. Please import manually.\nError: ${error.message}`
+          )
+          .catch(() => {});
       }
     })();
   },

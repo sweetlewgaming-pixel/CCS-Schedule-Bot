@@ -35,7 +35,7 @@ async function fetchBallchasingGroup(groupUrl) {
   }
 
   const data = await response.json();
-  return {
+  const row = {
     groupId,
     data,
   };
@@ -276,6 +276,12 @@ function buildTeamRowFromTeamStats(teamName, teamStats) {
   const losses = games > 0 ? games - wins : '';
   const seriesWin = wins >= 3 ? 1 : 0;
   const seriesLoss = seriesWin === 1 ? 0 : 1;
+  const teamTimePowerslide = Number(getFirstValue(teamStats, ['game_average.movement.time_powerslide'], ''));
+  const teamCountPowerslide = Number(getFirstValue(teamStats, ['game_average.movement.count_powerslide'], ''));
+  const derivedAvgPowerslide =
+    Number.isFinite(teamTimePowerslide) && Number.isFinite(teamCountPowerslide) && teamCountPowerslide > 0
+      ? teamTimePowerslide / teamCountPowerslide
+      : '';
 
   return {
     team_name: teamName || '',
@@ -383,11 +389,29 @@ function buildTeamRowFromTeamStats(teamName, teamStats) {
       ],
       ''
     ),
+    avg_distance_to_team_mates_per_game: getFirstValue(
+      teamStats,
+      [
+        'game_average.positioning.avg_distance_to_mates',
+        'game_average.positioning.avg_distance_to_teammates',
+        'cumulative.positioning.avg_distance_to_mates',
+        'cumulative.positioning.avg_distance_to_teammates',
+      ],
+      ''
+    ),
     demos_inflicted: getFirstValue(teamStats, ['cumulative.demo.inflicted'], ''),
     demos_inflicted_per_game: getFirstValue(teamStats, ['game_average.demo.inflicted'], ''),
     demos_taken: getFirstValue(teamStats, ['cumulative.demo.taken'], ''),
     demos_taken_per_game: getFirstValue(teamStats, ['game_average.demo.taken'], ''),
   };
+  if (
+    (row.avg_powerslide_time_per_game === '' || row.avg_powerslide_time_per_game === undefined) &&
+    derivedAvgPowerslide !== ''
+  ) {
+    row.avg_powerslide_time_per_game = derivedAvgPowerslide;
+  }
+
+  return row;
 }
 
 function buildFallbackTeamRows(playerRows) {

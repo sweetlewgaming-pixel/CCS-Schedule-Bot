@@ -356,14 +356,14 @@ async function updateMatchBallchasingLink(league, matchId, link, options = {}) {
 async function appendPlayerInputRows(league, playerRows) {
   return appendStatsRows(league, STATS_SHEET_NAME, playerRows, {
     includeHeaderRow: true,
-    includeSpacerRow: true,
+    includeSpacerRow: false,
   });
 }
 
 async function appendTeamInputRows(league, teamRows) {
   return appendStatsRows(league, TEAM_STATS_SHEET_NAME, teamRows, {
     includeHeaderRow: true,
-    includeSpacerRow: true,
+    includeSpacerRow: false,
   });
 }
 
