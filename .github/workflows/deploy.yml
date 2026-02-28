@@ -1,0 +1,31 @@
+name: Deploy Bot
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
+
+      - name: Add server to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.ORACLE_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy on Oracle
+        env:
+          ORACLE_HOST: ${{ secrets.ORACLE_HOST }}
+          ORACLE_USER: ${{ secrets.ORACLE_USER }}
+          APP_DIR: ${{ secrets.ORACLE_APP_DIR }}
+          APP_NAME: ccs-scheduler-bot
+        run: |
+          ssh "${ORACLE_USER}@${ORACLE_HOST}" "set -e; cd '${APP_DIR}'; git fetch origin main; git reset --hard origin/main; npm ci; if pm2 describe '${APP_NAME}' >/dev/null 2>&1; then pm2 restart '${APP_NAME}'; else pm2 start index.js --name '${APP_NAME}'; fi; pm2 save; pm2 status"
