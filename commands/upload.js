@@ -108,7 +108,9 @@ async function buildModAdminAlertMentions(guild) {
       normalized === 'moderator' ||
       normalized === 'moderators' ||
       normalized === 'admin' ||
-      normalized === 'admins'
+      normalized === 'admins' ||
+      normalized === 'commissioner' ||
+      normalized === 'commissioners'
     ) {
       mentionIds.add(role.id);
     }
