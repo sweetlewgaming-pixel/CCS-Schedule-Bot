@@ -91,6 +91,29 @@ function findMetricByFuzzyKey(obj, matcher) {
   return undefined;
 }
 
+function findMetricByFuzzyKeyDeep(obj, matcher, maxDepth = 4) {
+  if (!obj || typeof obj !== 'object' || maxDepth < 0) {
+    return undefined;
+  }
+
+  const direct = findMetricByFuzzyKey(obj, matcher);
+  if (direct !== undefined) {
+    return direct;
+  }
+
+  for (const value of Object.values(obj)) {
+    if (!value || typeof value !== 'object') {
+      continue;
+    }
+    const nested = findMetricByFuzzyKeyDeep(value, matcher, maxDepth - 1);
+    if (nested !== undefined) {
+      return nested;
+    }
+  }
+
+  return undefined;
+}
+
 function getDistanceToTeammatesMetric(source) {
   const exact = getFirstValue(
     source,
@@ -98,9 +121,15 @@ function getDistanceToTeammatesMetric(source) {
       'game_average.positioning.avg_distance_to_mates',
       'game_average.positioning.avg_distance_to_teammates',
       'game_average.positioning.avg_distance_to_team_mates',
+      'game_average.positioning.avg_distance_to_teammate',
+      'game_average.positioning.avg_distance_to_closest_teammate',
+      'game_average.positioning.avg_distance_to_closest_teammates',
       'cumulative.positioning.avg_distance_to_mates',
       'cumulative.positioning.avg_distance_to_teammates',
       'cumulative.positioning.avg_distance_to_team_mates',
+      'cumulative.positioning.avg_distance_to_teammate',
+      'cumulative.positioning.avg_distance_to_closest_teammate',
+      'cumulative.positioning.avg_distance_to_closest_teammates',
     ],
     undefined
   );
@@ -117,18 +146,18 @@ function getDistanceToTeammatesMetric(source) {
   };
 
   const gameAveragePositioning = getPathValue(source, 'game_average.positioning');
-  const fromGameAverage = findMetricByFuzzyKey(gameAveragePositioning, isTeammatesDistanceMetric);
+  const fromGameAverage = findMetricByFuzzyKeyDeep(gameAveragePositioning, isTeammatesDistanceMetric);
   if (fromGameAverage !== undefined && fromGameAverage !== null && fromGameAverage !== '') {
     return fromGameAverage;
   }
 
   const cumulativePositioning = getPathValue(source, 'cumulative.positioning');
-  const fromCumulative = findMetricByFuzzyKey(cumulativePositioning, isTeammatesDistanceMetric);
+  const fromCumulative = findMetricByFuzzyKeyDeep(cumulativePositioning, isTeammatesDistanceMetric);
   if (fromCumulative !== undefined && fromCumulative !== null && fromCumulative !== '') {
     return fromCumulative;
   }
 
-  return '';
+  return 0;
 }
 
 function normalizeWeekLabel(week) {
