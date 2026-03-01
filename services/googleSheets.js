@@ -9,6 +9,14 @@ const SPREADSHEET_IDS = {
 };
 
 const SHEET_NAME = 'RawSchedule';
+const STATS_SHEET_NAME = process.env.STATS_SHEET_NAME || 'PlayerInput';
+const TEAM_STATS_SHEET_NAME = process.env.TEAM_STATS_SHEET_NAME || 'TeamInput';
+const STATS_SPREADSHEET_IDS = {
+  CCS: process.env.CCS_STATS_SHEET_ID || SPREADSHEET_IDS.CCS,
+  CPL: process.env.CPL_STATS_SHEET_ID || SPREADSHEET_IDS.CPL,
+  CAS: process.env.CAS_STATS_SHEET_ID || SPREADSHEET_IDS.CAS,
+  CNL: process.env.CNL_STATS_SHEET_ID || SPREADSHEET_IDS.CNL,
+};
 
 function getSheetsClient() {
   const auth = new google.auth.JWT({
@@ -38,6 +46,31 @@ function colNumberToLetter(colNumber) {
   }
 
   return result;
+}
+
+function getStatsSpreadsheetId(league) {
+  return STATS_SPREADSHEET_IDS[league];
+}
+
+function getValueForHeader(row, header) {
+  if (row[header] !== undefined && row[header] !== null) {
+    return row[header];
+  }
+
+  const aliases = {
+    avg_distance_to_team_mates_per_game: ['avg_distance_to_teammates_per_game'],
+    avg_distance_to_teammates_per_game: ['avg_distance_to_team_mates_per_game'],
+    avg_distance_to_ball_has_possession_per_game: ['avg_distance_to_ball_possession_per_game'],
+    avg_distance_to_ball_possession_per_game: ['avg_distance_to_ball_has_possession_per_game'],
+  };
+
+  for (const alt of aliases[header] || []) {
+    if (row[alt] !== undefined && row[alt] !== null) {
+      return row[alt];
+    }
+  }
+
+  return '';
 }
 
 async function getRawScheduleRows(league) {
@@ -123,6 +156,38 @@ async function getMatchesByWeek(league, week) {
     .filter((match) => match.matchId && match.homeTeam && match.awayTeam);
 }
 
+async function getScheduledMatches(league) {
+  const { rows } = await getRawScheduleRows(league);
+
+  return rows
+    .map(({ rowData, rowIndex }) => ({
+      matchId: String(rowData.match_id || '').trim(),
+      week: String(rowData.week || '').trim(),
+      homeTeam: String(rowData.home_team || '').trim(),
+      awayTeam: String(rowData.away_team || '').trim(),
+      date: String(rowData.date || '').trim(),
+      time: String(rowData.time || '').trim(),
+      ballchasingValue: String(
+        rowData.ballchasing_link ||
+          rowData.ballchasing ||
+          rowData.ballchasing_url ||
+          rowData.replay_link ||
+          rowData.replay_url ||
+          rowData.ballchasing_group_id ||
+          ''
+      ).trim(),
+      rowIndex,
+    }))
+    .filter(
+      (match) =>
+        match.matchId &&
+        match.homeTeam &&
+        match.awayTeam &&
+        hasMeaningfulScheduleValue(match.date) &&
+        hasMeaningfulScheduleValue(match.time)
+    );
+}
+
 function cleanChannelNameForMatch(value) {
   return String(value || '')
     .replace(/✅+$/u, '')
@@ -130,17 +195,58 @@ function cleanChannelNameForMatch(value) {
     .trim();
 }
 
-function buildMatchupChannelCandidates(homeTeam, awayTeam) {
+function buildMatchupChannelName(homeTeam, awayTeam, orientation = 'AWAY_AT_HOME') {
   const homeSlug = slugifyTeamName(homeTeam);
   const awaySlug = slugifyTeamName(awayTeam);
-  const awayAtHome = `${awaySlug}-at-${homeSlug}`;
-  const homeAtAway = `${homeSlug}-at-${awaySlug}`;
-  return new Set([awayAtHome, homeAtAway]);
+  if (orientation === 'HOME_AT_AWAY') {
+    return `${homeSlug}-at-${awaySlug}`;
+  }
+  return `${awaySlug}-at-${homeSlug}`;
 }
 
-async function getMatchByChannel(league, channelName) {
+function parseMatchIdFromChannelTopic(topic) {
+  const text = String(topic || '').trim();
+  if (!text) {
+    return '';
+  }
+
+  const match = text.match(/(?:^|\|)match_id=([^|]+)/i);
+  if (!match || !match[1]) {
+    // Support plain topic format where the topic is the raw match_id.
+    if (!text.includes('|')) {
+      return text;
+    }
+    return '';
+  }
+
+  try {
+    return decodeURIComponent(match[1]).trim();
+  } catch (_) {
+    return String(match[1]).trim();
+  }
+}
+
+async function getMatchByChannel(league, channelOrName) {
+  const channelName = typeof channelOrName === 'string' ? channelOrName : channelOrName?.name;
+  const channelTopic = typeof channelOrName === 'string' ? '' : channelOrName?.topic;
   const targetName = cleanChannelNameForMatch(channelName);
   const { rows } = await getRawScheduleRows(league);
+
+  const topicMatchId = parseMatchIdFromChannelTopic(channelTopic);
+  if (topicMatchId) {
+    const exact = rows.find(({ rowData }) => String(rowData.match_id || '').trim() === topicMatchId);
+    if (exact) {
+      return {
+        matchId: String(exact.rowData.match_id || '').trim(),
+        homeTeam: String(exact.rowData.home_team || '').trim(),
+        awayTeam: String(exact.rowData.away_team || '').trim(),
+        week: String(exact.rowData.week || '').trim(),
+        date: String(exact.rowData.date || '').trim(),
+        time: String(exact.rowData.time || '').trim(),
+        rowIndex: exact.rowIndex,
+      };
+    }
+  }
 
   const candidates = rows
     .map(({ rowData, rowIndex }) => {
@@ -154,8 +260,8 @@ async function getMatchByChannel(league, channelName) {
         return null;
       }
 
-      const names = buildMatchupChannelCandidates(homeTeam, awayTeam);
-      if (!names.has(targetName)) {
+      const expectedName = buildMatchupChannelName(homeTeam, awayTeam, 'AWAY_AT_HOME');
+      if (expectedName !== targetName) {
         return null;
       }
 
@@ -280,6 +386,18 @@ async function updateMatchBallchasingLink(league, matchId, link, options = {}) {
     };
   }
 
+  if (options.dryRun) {
+    return {
+      duplicate: false,
+      match: {
+        homeTeam: String(target.rowData.home_team || '').trim(),
+        awayTeam: String(target.rowData.away_team || '').trim(),
+        week: String(target.rowData.week || '').trim(),
+        matchId: String(target.rowData.match_id || '').trim(),
+      },
+    };
+  }
+
   const sheets = getSheetsClient();
   const rowIndex = target.rowIndex;
   const linkColLetter = colNumberToLetter(linkColIndex);
@@ -305,6 +423,82 @@ async function updateMatchBallchasingLink(league, matchId, link, options = {}) {
       week: String(target.rowData.week || '').trim(),
       matchId: String(target.rowData.match_id || '').trim(),
     },
+  };
+}
+
+async function appendPlayerInputRows(league, playerRows) {
+  return appendStatsRows(league, STATS_SHEET_NAME, playerRows, {
+    includeHeaderRow: true,
+    includeSpacerRow: false,
+  });
+}
+
+async function appendTeamInputRows(league, teamRows) {
+  return appendStatsRows(league, TEAM_STATS_SHEET_NAME, teamRows, {
+    includeHeaderRow: true,
+    includeSpacerRow: false,
+  });
+}
+
+async function appendStatsRows(league, sheetName, rowsToAppend, options = {}) {
+  const spreadsheetId = getStatsSpreadsheetId(league);
+  if (!spreadsheetId) {
+    throw new Error(`Stats spreadsheet is not configured for league ${league}.`);
+  }
+
+  if (!Array.isArray(rowsToAppend) || rowsToAppend.length === 0) {
+    return { insertedRows: 0, insertedPlayers: 0, startRow: 0 };
+  }
+
+  const includeHeaderRow = options.includeHeaderRow !== false;
+  const includeSpacerRow = options.includeSpacerRow !== false;
+
+  const sheets = getSheetsClient();
+  const headerResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${sheetName}!1:1`,
+  });
+  const headers = headerResponse.data.values?.[0] || [];
+  if (!headers.length) {
+    throw new Error(`No header row found in ${sheetName}.`);
+  }
+
+  const normalizedHeaders = headers.map(normalizeHeader);
+  const values = [];
+  if (includeSpacerRow) {
+    values.push(['']);
+  }
+  if (includeHeaderRow) {
+    values.push(headers);
+  }
+  for (const row of rowsToAppend) {
+    values.push(
+      normalizedHeaders.map((header) => {
+        return getValueForHeader(row, header);
+      })
+    );
+  }
+
+  const response = await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `${sheetName}!A1`,
+    valueInputOption: 'USER_ENTERED',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: {
+      values,
+    },
+  });
+
+  const updatedRange = String(response.data?.updates?.updatedRange || '');
+  const startMatch = updatedRange.match(/![A-Z]+(\d+):/);
+  const startRow = startMatch ? Number(startMatch[1]) : 0;
+
+  return {
+    insertedRows: rowsToAppend.length,
+    insertedPlayers: rowsToAppend.length,
+    startRow,
+    endRow: startRow > 0 ? startRow + rowsToAppend.length - 1 : 0,
+    sheetName,
   };
 }
 
@@ -380,8 +574,11 @@ async function updateMatchForfeitResult(league, matchId, winnerCode, options = {
 
 module.exports = {
   getMatchesByWeek,
+  getScheduledMatches,
   getMatchByChannel,
   updateMatchDateTime,
   updateMatchBallchasingLink,
   updateMatchForfeitResult,
+  appendPlayerInputRows,
+  appendTeamInputRows,
 };

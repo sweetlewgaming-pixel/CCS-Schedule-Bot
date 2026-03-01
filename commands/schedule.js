@@ -17,6 +17,7 @@ const {
   getMatchByChannel,
   updateMatchDateTime,
   updateMatchForfeitResult,
+  appendTeamInputRows,
 } = require('../services/googleSheets');
 const { formatScheduleDate, formatScheduleTime } = require('../utils/formatDate');
 const { getRoleIdByTeamName } = require('../utils/teamRoles');
@@ -471,6 +472,36 @@ async function publishForfeitResult(interaction, league, match, winnerCode) {
   }
 }
 
+function buildForfeitTeamInputRows(match, winnerCode) {
+  const winnerIsAway = String(winnerCode || '').toUpperCase() === 'A';
+  const winnerTeam = winnerIsAway ? match.awayTeam : match.homeTeam;
+  const loserTeam = winnerIsAway ? match.homeTeam : match.awayTeam;
+
+  return [
+    {
+      team_name: winnerTeam,
+      games: 3,
+      wins: 3,
+      series_win: 1,
+      losses: 0,
+      series_loss: 0,
+    },
+    {
+      team_name: loserTeam,
+      games: 3,
+      wins: 0,
+      series_win: 0,
+      losses: 3,
+      series_loss: 1,
+    },
+  ];
+}
+
+async function appendForfeitTeamStats(league, match, winnerCode) {
+  const rows = buildForfeitTeamInputRows(match, winnerCode);
+  return appendTeamInputRows(league, rows);
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('schedule')
@@ -488,7 +519,7 @@ module.exports = {
 
     const inferredLeague = inferLeagueFromParentCategory(interaction.channel);
     if (inferredLeague && interaction.channel?.name?.includes('-at-')) {
-      const inferredMatch = await getMatchByChannel(inferredLeague, interaction.channel.name);
+      const inferredMatch = await getMatchByChannel(inferredLeague, interaction.channel);
       if (inferredMatch) {
         const week = normalizeWeekValue(inferredMatch.week);
         await interaction.reply({
@@ -792,6 +823,11 @@ module.exports = {
       }
 
       pendingForfeitConfirms.delete(forfeitConfirm.token);
+      try {
+        await appendForfeitTeamStats(pending.league, result.match, pending.winnerCode);
+      } catch (error) {
+        console.error('Failed to append TeamInput for forfeit:', error);
+      }
       await publishForfeitResult(interaction, pending.league, result.match, pending.winnerCode);
       await interaction.update({
         content: `? Forfeit recorded successfully (${pending.winnerCode} FF).`,
@@ -846,6 +882,11 @@ module.exports = {
         const result = await updateMatchForfeitResult(pending.league, pending.matchId, pending.winnerCode, {
           preventDuplicate: false,
         });
+        try {
+          await appendForfeitTeamStats(pending.league, result.match, pending.winnerCode);
+        } catch (error) {
+          console.error('Failed to append TeamInput for overwritten forfeit:', error);
+        }
         await publishForfeitResult(interaction, pending.league, result.match, pending.winnerCode);
       } else {
         const updateResult = await updateMatchDateTime(pending.league, pending.matchId, pending.date, pending.time, {

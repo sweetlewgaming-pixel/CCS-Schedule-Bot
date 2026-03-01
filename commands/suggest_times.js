@@ -780,7 +780,7 @@ async function resolveTimeskeeperMention(guild) {
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('suggest_times')
+    .setName('suggest')
     .setDescription('Analyze posted schedules in this matchup channel and suggest overlap times')
     .setDMPermission(false),
 

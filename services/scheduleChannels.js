@@ -117,6 +117,10 @@ async function buildRebuildPlan(guild, league, week) {
         name: buildChannelName(match),
         teamA,
         teamB,
+        matchId: match.matchId,
+        week: match.week,
+        homeTeam: match.homeTeam,
+        awayTeam: match.awayTeam,
       };
     })
     .filter((spec) => spec.name);
@@ -158,10 +162,13 @@ async function applyRebuildPlan(guild, plan) {
 
   const createdNames = [];
   for (const spec of channelSpecs) {
+    const topic = String(spec.matchId || '').trim();
+
     const created = await guild.channels.create({
       name: spec.name,
       type: ChannelType.GuildText,
       parent: category.id,
+      topic,
     });
 
     createdNames.push(created.name);

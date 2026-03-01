@@ -9,6 +9,8 @@ const uploadCommand = require('./commands/upload');
 const uploadNullCommand = require('./commands/upload_null');
 const availabilityCommand = require('./commands/availability');
 const availabilityAdminCommand = require('./commands/availability_admin');
+const helpCommand = require('./commands/help');
+const { startMatchReminderService } = require('./services/matchReminderService');
 
 const requiredEnv = ['DISCORD_TOKEN', 'CLIENT_ID', 'GOOGLE_CLIENT_EMAIL', 'GOOGLE_PRIVATE_KEY'];
 const missingEnv = requiredEnv.filter((key) => !process.env[key]);
@@ -29,6 +31,7 @@ client.commands.set(uploadCommand.data.name, uploadCommand);
 client.commands.set(uploadNullCommand.data.name, uploadNullCommand);
 client.commands.set(availabilityCommand.data.name, availabilityCommand);
 client.commands.set(availabilityAdminCommand.data.name, availabilityAdminCommand);
+client.commands.set(helpCommand.data.name, helpCommand);
 
 async function registerSlashCommands() {
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -52,6 +55,8 @@ client.once(Events.ClientReady, async (readyClient) => {
   } catch (error) {
     console.error('Failed to register slash commands:', error);
   }
+
+  startMatchReminderService(readyClient);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -75,6 +80,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (availabilityAdminCommand.handleSelectMenu) {
         await availabilityAdminCommand.handleSelectMenu(interaction);
+      }
+
+      if (interaction.deferred || interaction.replied) {
+        return;
+      }
+
+      if (uploadNullCommand.handleSelectMenu) {
+        await uploadNullCommand.handleSelectMenu(interaction);
       }
 
       if (interaction.deferred || interaction.replied) {
@@ -112,6 +125,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (requestCommand.handleButtonInteraction) {
         await requestCommand.handleButtonInteraction(interaction);
+      }
+
+      if (interaction.deferred || interaction.replied) {
+        return;
+      }
+
+      if (uploadCommand.handleButtonInteraction) {
+        await uploadCommand.handleButtonInteraction(interaction);
+      }
+
+      if (interaction.deferred || interaction.replied) {
+        return;
+      }
+
+      if (uploadNullCommand.handleButtonInteraction) {
+        await uploadNullCommand.handleButtonInteraction(interaction);
       }
 
       if (interaction.deferred || interaction.replied) {
