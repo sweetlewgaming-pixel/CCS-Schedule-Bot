@@ -42,12 +42,12 @@ module.exports = {
 
       lines.push('', '**Team Members (Matchup Channels)**');
       add('/upload', 'Upload a Ballchasing group link for the current matchup.');
-      add('/request', 'Post a proposed match time request with accept/decline buttons.');
+      add('/propose_time', 'Post a proposed match time request with accept/decline buttons.');
 
       lines.push('', '**Staff / Admin**');
       add('/schedule', 'Schedule a match date/time or record forfeits.');
       add('/rebuild_week', 'Delete/recreate weekly matchup channels from RawSchedule.');
-      add('/suggest_times', 'Parse posted availability and suggest best overlap times.');
+      add('/suggest', 'Parse posted availability and suggest best overlap times.');
       add('/upload_staff', 'Staff upload mode from any channel (select league/week/match if needed).');
       add('/availability_admin', 'Create or import availability on behalf of another user.');
     } else {
@@ -64,7 +64,7 @@ module.exports = {
 
       if (inMatchupChannel) {
         add('/upload', 'Upload a Ballchasing group link for this matchup (team members + staff).');
-        add('/request', 'Post a proposed match time request with accept/decline buttons.');
+        add('/propose_time', 'Post a proposed match time request with accept/decline buttons.');
       }
     }
 

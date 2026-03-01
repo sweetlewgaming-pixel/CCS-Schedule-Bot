@@ -64,7 +64,7 @@ async function resolveRoleBySlug(guild, teamSlug) {
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('request')
+    .setName('propose_time')
     .setDescription('Request a proposed day/time in this matchup channel')
     .addStringOption((option) => option.setName('day').setDescription('Day (ex: Tuesday)').setRequired(true))
     .addStringOption((option) =>
@@ -92,7 +92,7 @@ module.exports = {
     const slugs = parseMatchupSlugsFromChannel(interaction.channel.name);
     if (!slugs) {
       await interaction.reply({
-        content: 'Use `/request` inside a matchup channel named like `team-a-at-team-b`.',
+        content: 'Use `/propose_time` inside a matchup channel named like `team-a-at-team-b`.',
         flags: MessageFlags.Ephemeral,
       });
       return;
