@@ -30,38 +30,32 @@ module.exports = {
     const inMatchupChannel = isMatchupChannel(channelName);
     const inAvailabilityChannel = isAvailabilityAllowedChannel(channelName);
 
-    const lines = ['**Commands You Can Use**', '`/help`'];
+    const lines = ['**Commands You Can Use**'];
+    const add = (command, description) => lines.push(`\`${command}\` - ${description}`);
+
+    add('/help', 'Show this command list.');
 
     if (inAvailabilityChannel) {
-      lines.push('`/availability`');
+      add('/availability', 'Post your weekly availability using the schedule UI.');
+    } else {
+      add('/availability', 'Post availability (use in matchup channels or team channels like `*-organization` / `*-chat`).');
+    }
+
+    if (inMatchupChannel) {
+      add('/upload', 'Upload a Ballchasing group link for this matchup (team members + staff).');
+      add('/request', 'Post a proposed match time request with accept/decline buttons.');
+    } else if (isElevated) {
+      add('/request', 'Post a proposed match time request (use in a matchup channel).');
+      add('/upload', 'Upload replay link for current matchup (use in a matchup channel).');
     }
 
     if (isElevated) {
-      lines.push(
-        '`/schedule`',
-        '`/rebuild_week`',
-        '`/suggest_times`',
-        '`/request`',
-        '`/upload_staff`',
-        '`/availability_admin`'
-      );
-      if (inMatchupChannel) {
-        lines.push('`/upload`');
-      } else {
-        lines.push('`/upload` (run in a matchup channel)');
-      }
-    } else {
-      if (inMatchupChannel) {
-        lines.push('`/upload` (if you are on one of the two teams)');
-      }
-    }
-
-    lines.push('', '**Channel Notes**');
-    lines.push('`/availability` works in matchup channels and team channels (`*-organization`, `*-chat`).');
-    lines.push('`/upload` must be used in a matchup channel.');
-    lines.push('`/upload_staff` can be used anywhere (staff can select league/week/match when needed).');
-    if (!isElevated) {
-      lines.push('Staff-only commands are hidden because your role is not elevated.');
+      lines.push('', '**Staff Commands**');
+      add('/schedule', 'Schedule a match date/time or record forfeits.');
+      add('/rebuild_week', 'Delete/recreate weekly matchup channels from RawSchedule.');
+      add('/suggest_times', 'Parse posted availability and suggest best overlap times.');
+      add('/upload_staff', 'Staff upload mode from any channel (select league/week/match if needed).');
+      add('/availability_admin', 'Create or import availability on behalf of another user.');
     }
 
     await interaction.reply({
