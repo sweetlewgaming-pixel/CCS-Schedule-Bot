@@ -392,11 +392,19 @@ async function ensureSessionOwner(interaction, session) {
       recovered.expiresAt = Date.now() + SESSION_TTL_MS;
       await upsertSessionRecord(recovered);
 
-      await interaction.reply({
-        content: `${buildSummary(recovered)}\n\nYour previous form expired or restarted. A fresh editor is open below.`,
+      const payload = {
+        content: `${buildSummary(recovered)}\n\nYour previous form expired or restarted. This form was refreshed.`,
         components: buildComponents(recovered),
-        flags: MessageFlags.Ephemeral,
-      });
+      };
+
+      if (interaction.isButton?.() || interaction.isStringSelectMenu?.()) {
+        await interaction.update(payload);
+      } else {
+        await interaction.reply({
+          ...payload,
+          flags: MessageFlags.Ephemeral,
+        });
+      }
       return false;
     }
 
