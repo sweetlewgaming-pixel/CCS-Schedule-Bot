@@ -29,33 +29,43 @@ module.exports = {
     const channelName = interaction.channel?.name || '';
     const inMatchupChannel = isMatchupChannel(channelName);
     const inAvailabilityChannel = isAvailabilityAllowedChannel(channelName);
-
-    const lines = ['**Commands You Can Use**'];
+    const lines = [];
     const add = (command, description) => lines.push(`\`${command}\` - ${description}`);
 
-    add('/help', 'Show this command list.');
-
-    if (inAvailabilityChannel) {
-      add('/availability', 'Post your weekly availability using the schedule UI.');
-    } else {
-      add('/availability', 'Post availability (use in matchup channels or team channels like `*-organization` / `*-chat`).');
-    }
-
-    if (inMatchupChannel) {
-      add('/upload', 'Upload a Ballchasing group link for this matchup (team members + staff).');
-      add('/request', 'Post a proposed match time request with accept/decline buttons.');
-    } else if (isElevated) {
-      add('/request', 'Post a proposed match time request (use in a matchup channel).');
-      add('/upload', 'Upload replay link for current matchup (use in a matchup channel).');
-    }
-
     if (isElevated) {
-      lines.push('', '**Staff Commands**');
+      lines.push('**Command Access Tiers**', '', '**Everyone**');
+      add('/help', 'Show this command list.');
+      add(
+        '/availability',
+        'Post your weekly availability (matchup channels + team channels like `*-organization` / `*-chat`).'
+      );
+
+      lines.push('', '**Team Members (Matchup Channels)**');
+      add('/upload', 'Upload a Ballchasing group link for the current matchup.');
+      add('/request', 'Post a proposed match time request with accept/decline buttons.');
+
+      lines.push('', '**Staff / Admin**');
       add('/schedule', 'Schedule a match date/time or record forfeits.');
       add('/rebuild_week', 'Delete/recreate weekly matchup channels from RawSchedule.');
       add('/suggest_times', 'Parse posted availability and suggest best overlap times.');
       add('/upload_staff', 'Staff upload mode from any channel (select league/week/match if needed).');
       add('/availability_admin', 'Create or import availability on behalf of another user.');
+    } else {
+      lines.push('**Commands You Can Use**');
+      add('/help', 'Show this command list.');
+      if (inAvailabilityChannel) {
+        add('/availability', 'Post your weekly availability using the schedule UI.');
+      } else {
+        add(
+          '/availability',
+          'Post availability (use in matchup channels or team channels like `*-organization` / `*-chat`).'
+        );
+      }
+
+      if (inMatchupChannel) {
+        add('/upload', 'Upload a Ballchasing group link for this matchup (team members + staff).');
+        add('/request', 'Post a proposed match time request with accept/decline buttons.');
+      }
     }
 
     await interaction.reply({
