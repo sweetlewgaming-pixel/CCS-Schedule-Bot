@@ -42,7 +42,7 @@ module.exports = {
         '`/rebuild_week`',
         '`/suggest_times`',
         '`/request`',
-        '`/upload_null`',
+        '`/upload_staff`',
         '`/availability_admin`'
       );
       if (inMatchupChannel) {
@@ -58,7 +58,8 @@ module.exports = {
 
     lines.push('', '**Channel Notes**');
     lines.push('`/availability` works in matchup channels and team channels (`*-organization`, `*-chat`).');
-    lines.push('`/upload` and `/upload_null` must be used in a matchup channel.');
+    lines.push('`/upload` must be used in a matchup channel.');
+    lines.push('`/upload_staff` can be used anywhere (staff can select league/week/match when needed).');
     if (!isElevated) {
       lines.push('Staff-only commands are hidden because your role is not elevated.');
     }

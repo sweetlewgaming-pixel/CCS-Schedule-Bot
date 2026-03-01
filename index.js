@@ -86,6 +86,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      if (uploadNullCommand.handleSelectMenu) {
+        await uploadNullCommand.handleSelectMenu(interaction);
+      }
+
+      if (interaction.deferred || interaction.replied) {
+        return;
+      }
+
       await scheduleCommand.handleSelectMenu(interaction);
       return;
     }
