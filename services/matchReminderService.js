@@ -11,6 +11,11 @@ const LEAGUES = ['CCS', 'CPL', 'CAS', 'CNL'];
 const POLL_INTERVAL_MS = 60 * 1000;
 const STATE_PATH = path.join(__dirname, '..', 'data', 'reminder-state.json');
 const REMINDER_TIME_MODE = String(process.env.REMINDER_TIME_MODE || 'PM').trim().toUpperCase();
+const REMINDER_RULES = [
+  { type: 'h12', offsetMinutes: 12 * 60 },
+  { type: 'm30', offsetMinutes: 30 },
+  { type: 'start', offsetMinutes: 0 },
+];
 
 function ensureStateDir() {
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
@@ -108,39 +113,40 @@ function formatTimePmEst(timeText) {
   return `${hour12}:${mm} ${REMINDER_TIME_MODE === 'AM' ? 'AM' : 'PM'} EST`;
 }
 
-function buildReminderKey(year, league, match) {
+function buildReminderKey(year, league, match, reminderType) {
   const normalizedTime = String(match.time || '').trim();
   const normalizedDate = String(match.date || '').trim();
-  return `${year}|${league}|${match.matchId}|${normalizedDate}|${normalizedTime}`;
+  return `${year}|${league}|${match.matchId}|${normalizedDate}|${normalizedTime}|${reminderType}`;
+}
+
+function toDayIndex(year, month, day) {
+  return Math.floor(Date.UTC(year, month - 1, day) / 86400000);
+}
+
+function minutesFromEstParts(parts) {
+  return toDayIndex(parts.year, parts.month, parts.day) * 1440 + parts.hour * 60 + parts.minute;
+}
+
+function minutesUntilMatch(nowParts, parsedMatchTime) {
+  const nowTotal = minutesFromEstParts(nowParts);
+  const matchTotal = toDayIndex(nowParts.year, parsedMatchTime.month, parsedMatchTime.day) * 1440 +
+    parsedMatchTime.hour * 60 +
+    parsedMatchTime.minute;
+  return matchTotal - nowTotal;
+}
+
+function hasMatchBeenPlayed(match) {
+  const value = String(match.ballchasingValue || '').trim().toLowerCase();
+  if (!value) {
+    return false;
+  }
+
+  return !['tbd', 'na', 'n/a', '-'].includes(value);
 }
 
 async function mentionForTeam(guild, teamName) {
   const roleId = await getRoleIdByTeamName(guild, teamName);
   return roleId ? `<@&${roleId}>` : `@${teamName}`;
-}
-
-async function getUploadCommandMention(guild) {
-  try {
-    if (guild?.commands?.fetch) {
-      const guildCommands = await guild.commands.fetch();
-      const guildCommand = guildCommands.find((command) => command.name === 'upload');
-      if (guildCommand) {
-        return `</upload:${guildCommand.id}>`;
-      }
-    }
-
-    if (guild?.client?.application?.commands?.fetch) {
-      const globalCommands = await guild.client.application.commands.fetch();
-      const globalCommand = globalCommands.find((command) => command.name === 'upload');
-      if (globalCommand) {
-        return `</upload:${globalCommand.id}>`;
-      }
-    }
-  } catch (_) {
-    // Fall back to plain command text.
-  }
-
-  return '`/upload`';
 }
 
 async function findMatchChannelByMatchId(guild, league, matchId) {
@@ -234,22 +240,17 @@ async function pollMatchReminders(client) {
       }
 
       for (const match of matches) {
+        if (hasMatchBeenPlayed(match)) {
+          continue;
+        }
+
         const parsed = parseDateAndTimeEST(match.date, match.time);
         if (!parsed) {
           continue;
         }
 
-        if (
-          parsed.month !== now.month ||
-          parsed.day !== now.day ||
-          parsed.hour !== now.hour ||
-          parsed.minute !== now.minute
-        ) {
-          continue;
-        }
-
-        const key = buildReminderKey(now.year, league, match);
-        if (state.posted[key]) {
+        const minutesUntil = minutesUntilMatch(now, parsed);
+        if (minutesUntil < 0) {
           continue;
         }
 
@@ -266,14 +267,31 @@ async function pollMatchReminders(client) {
 
         const mentionA = await mentionForTeam(guild, match.awayTeam);
         const mentionB = await mentionForTeam(guild, match.homeTeam);
-        const uploadCommandMention = await getUploadCommandMention(guild);
-        const message = `${mentionA} ${mentionB} MATCH TIME IS NOW: ${formatTimePmEst(
-          match.time
-        )}. Good luck! **Please use ${uploadCommandMention} to post your ballchasing link when you have finished the match.**`;
+        const formattedTime = formatTimePmEst(match.time);
 
-        await channel.send(message);
-        state.posted[key] = Date.now();
-        stateChanged = true;
+        for (const rule of REMINDER_RULES) {
+          if (minutesUntil !== rule.offsetMinutes) {
+            continue;
+          }
+
+          const key = buildReminderKey(now.year, league, match, rule.type);
+          if (state.posted[key]) {
+            continue;
+          }
+
+          let message = '';
+          if (rule.type === 'h12') {
+            message = `${mentionA} ${mentionB} Reminder: you have a match today at ${formattedTime}.`;
+          } else if (rule.type === 'm30') {
+            message = `${mentionA} ${mentionB} Reminder: you have a match today at ${formattedTime}.`;
+          } else {
+            message = `${mentionA} ${mentionB} Match time is now: ${formattedTime}. Good luck!`;
+          }
+
+          await channel.send(message);
+          state.posted[key] = Date.now();
+          stateChanged = true;
+        }
       }
     }
   }

@@ -167,6 +167,15 @@ async function getScheduledMatches(league) {
       awayTeam: String(rowData.away_team || '').trim(),
       date: String(rowData.date || '').trim(),
       time: String(rowData.time || '').trim(),
+      ballchasingValue: String(
+        rowData.ballchasing_link ||
+          rowData.ballchasing ||
+          rowData.ballchasing_url ||
+          rowData.replay_link ||
+          rowData.replay_url ||
+          rowData.ballchasing_group_id ||
+          ''
+      ).trim(),
       rowIndex,
     }))
     .filter(
