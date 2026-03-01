@@ -156,6 +156,29 @@ async function getMatchesByWeek(league, week) {
     .filter((match) => match.matchId && match.homeTeam && match.awayTeam);
 }
 
+async function getScheduledMatches(league) {
+  const { rows } = await getRawScheduleRows(league);
+
+  return rows
+    .map(({ rowData, rowIndex }) => ({
+      matchId: String(rowData.match_id || '').trim(),
+      week: String(rowData.week || '').trim(),
+      homeTeam: String(rowData.home_team || '').trim(),
+      awayTeam: String(rowData.away_team || '').trim(),
+      date: String(rowData.date || '').trim(),
+      time: String(rowData.time || '').trim(),
+      rowIndex,
+    }))
+    .filter(
+      (match) =>
+        match.matchId &&
+        match.homeTeam &&
+        match.awayTeam &&
+        hasMeaningfulScheduleValue(match.date) &&
+        hasMeaningfulScheduleValue(match.time)
+    );
+}
+
 function cleanChannelNameForMatch(value) {
   return String(value || '')
     .replace(/✅+$/u, '')
@@ -542,6 +565,7 @@ async function updateMatchForfeitResult(league, matchId, winnerCode, options = {
 
 module.exports = {
   getMatchesByWeek,
+  getScheduledMatches,
   getMatchByChannel,
   updateMatchDateTime,
   updateMatchBallchasingLink,

@@ -10,6 +10,7 @@ const uploadNullCommand = require('./commands/upload_null');
 const availabilityCommand = require('./commands/availability');
 const availabilityAdminCommand = require('./commands/availability_admin');
 const helpCommand = require('./commands/help');
+const { startMatchReminderService } = require('./services/matchReminderService');
 
 const requiredEnv = ['DISCORD_TOKEN', 'CLIENT_ID', 'GOOGLE_CLIENT_EMAIL', 'GOOGLE_PRIVATE_KEY'];
 const missingEnv = requiredEnv.filter((key) => !process.env[key]);
@@ -54,6 +55,8 @@ client.once(Events.ClientReady, async (readyClient) => {
   } catch (error) {
     console.error('Failed to register slash commands:', error);
   }
+
+  startMatchReminderService(readyClient);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
