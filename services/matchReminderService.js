@@ -10,6 +10,7 @@ const { slugifyTeamName } = require('../utils/slugify');
 const LEAGUES = ['CCS', 'CPL', 'CAS', 'CNL'];
 const POLL_INTERVAL_MS = 60 * 1000;
 const STATE_PATH = path.join(__dirname, '..', 'data', 'reminder-state.json');
+const REMINDER_TIME_MODE = String(process.env.REMINDER_TIME_MODE || 'PM').trim().toUpperCase();
 
 function ensureStateDir() {
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
@@ -79,7 +80,14 @@ function parseDateAndTimeEST(dateText, timeText) {
   const day = Number(dateMatch[2]);
   const hour12 = Number(timeMatch[1]);
   const minute = Number(timeMatch[2] || 0);
-  const hour24 = hour12 === 12 ? 12 : hour12 + 12; // PM only
+  const hour24 =
+    REMINDER_TIME_MODE === 'AM'
+      ? hour12 === 12
+        ? 0
+        : hour12
+      : hour12 === 12
+        ? 12
+        : hour12 + 12; // Default PM mode
 
   return {
     month,
@@ -92,12 +100,12 @@ function parseDateAndTimeEST(dateText, timeText) {
 function formatTimePmEst(timeText) {
   const parsed = parseDateAndTimeEST('1/1', timeText);
   if (!parsed) {
-    return `${String(timeText || '').trim()} PM EST`;
+    return `${String(timeText || '').trim()} ${REMINDER_TIME_MODE === 'AM' ? 'AM' : 'PM'} EST`;
   }
 
-  const hour12 = parsed.hour === 12 ? 12 : parsed.hour - 12;
+  const hour12 = parsed.hour === 0 ? 12 : parsed.hour > 12 ? parsed.hour - 12 : parsed.hour;
   const mm = String(parsed.minute).padStart(2, '0');
-  return `${hour12}:${mm} PM EST`;
+  return `${hour12}:${mm} ${REMINDER_TIME_MODE === 'AM' ? 'AM' : 'PM'} EST`;
 }
 
 function buildReminderKey(year, league, match) {
