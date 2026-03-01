@@ -3,6 +3,8 @@ const {
   MessageFlags,
   SlashCommandBuilder,
   ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   StringSelectMenuBuilder,
 } = require('discord.js');
 
@@ -33,8 +35,10 @@ const LEAGUE_SCHEDULING_CATEGORIES = {
 const LEAGUES = ['CCS', 'CPL', 'CAS', 'CNL'];
 const WEEKS = Array.from({ length: 12 }, (_, i) => i + 1);
 const SELECT_PREFIX = 'uploadstaff';
+const OVERWRITE_PREFIX = 'uploadstaffovr';
 const PENDING_TTL_MS = 10 * 60 * 1000;
 const pendingSelections = new Map();
+const pendingOverwrites = new Map();
 
 function inferLeagueFromParentCategory(channel) {
   const parentName = channel?.parent?.name;
@@ -126,6 +130,15 @@ function cleanupPendingSelections() {
   }
 }
 
+function cleanupPendingOverwrites() {
+  const now = Date.now();
+  for (const [token, data] of pendingOverwrites.entries()) {
+    if (data.expiresAt <= now) {
+      pendingOverwrites.delete(token);
+    }
+  }
+}
+
 function createSelectionToken(payload) {
   cleanupPendingSelections();
   const token = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
@@ -139,6 +152,21 @@ function createSelectionToken(payload) {
 function getPendingSelection(token) {
   cleanupPendingSelections();
   return pendingSelections.get(token) || null;
+}
+
+function createOverwriteToken(payload) {
+  cleanupPendingOverwrites();
+  const token = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  pendingOverwrites.set(token, {
+    ...payload,
+    expiresAt: Date.now() + PENDING_TTL_MS,
+  });
+  return token;
+}
+
+function getPendingOverwrite(token) {
+  cleanupPendingOverwrites();
+  return pendingOverwrites.get(token) || null;
 }
 
 function buildLeagueSelectRow(token) {
@@ -176,6 +204,27 @@ function parseSelectCustomId(customId) {
     return null;
   }
   return { stage: parts[1], token: parts[2] };
+}
+
+function buildOverwriteButtons(token) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${OVERWRITE_PREFIX}:confirm:${token}`)
+      .setLabel('Yes, overwrite')
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId(`${OVERWRITE_PREFIX}:cancel:${token}`)
+      .setLabel('Cancel')
+      .setStyle(ButtonStyle.Secondary)
+  );
+}
+
+function parseOverwriteCustomId(customId) {
+  const parts = String(customId || '').split(':');
+  if (parts.length !== 3 || parts[0] !== OVERWRITE_PREFIX) {
+    return null;
+  }
+  return { action: parts[1], token: parts[2] };
 }
 
 async function processUploadStaff(interaction, league, match, link, groupData) {
@@ -250,9 +299,19 @@ async function executeUploadStaff(interaction, league, match, link) {
   }
 
   if (duplicateCheckResult.duplicate) {
-    await interaction.editReply(
-      `A ballchasing link is already saved for this match and cannot be replaced.\nCurrent: ${duplicateCheckResult.existingLink}`
-    );
+    const token = createOverwriteToken({
+      userId: interaction.user.id,
+      guildId: interaction.guildId,
+      channelId: interaction.channelId,
+      league,
+      match,
+      link,
+      existingLink: duplicateCheckResult.existingLink,
+    });
+    await interaction.editReply({
+      content: `A ballchasing link is already saved for this match.\nCurrent: ${duplicateCheckResult.existingLink}\nDo you want to overwrite it?`,
+      components: [buildOverwriteButtons(token)],
+    });
     return;
   }
 
@@ -443,5 +502,78 @@ module.exports = {
       pendingSelections.delete(parsed.token);
       await executeUploadStaff(interaction, league, match, pending.link);
     }
+  },
+
+  async handleButtonInteraction(interaction) {
+    const parsed = parseOverwriteCustomId(interaction.customId);
+    if (!parsed) {
+      return;
+    }
+
+    const pending = getPendingOverwrite(parsed.token);
+    if (!pending) {
+      await interaction.reply({
+        content: 'This overwrite confirmation has expired. Run /upload_staff again.',
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    if (interaction.user.id !== pending.userId || interaction.guildId !== pending.guildId) {
+      await interaction.reply({
+        content: 'Only the admin who started this upload can confirm overwrite.',
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    if (!isAdminAuthorized(interaction)) {
+      pendingOverwrites.delete(parsed.token);
+      await interaction.reply({
+        content: 'You no longer have permission to use this command.',
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    if (parsed.action === 'cancel') {
+      pendingOverwrites.delete(parsed.token);
+      await interaction.update({
+        content: 'Upload cancelled. Existing ballchasing link was kept.',
+        components: [],
+      });
+      return;
+    }
+
+    if (parsed.action !== 'confirm') {
+      return;
+    }
+
+    await interaction.update({
+      content: `Overwriting existing link for ${pending.match.homeTeam} vs ${pending.match.awayTeam}...`,
+      components: [],
+    });
+
+    pendingOverwrites.delete(parsed.token);
+
+    let group;
+    try {
+      group = await fetchBallchasingGroup(pending.link);
+    } catch (error) {
+      await interaction.editReply(`Could not read that Ballchasing group link.\nError: ${error.message}`);
+      await notifyStaffUploadFailure(
+        interaction.guild,
+        interaction.channel,
+        `⚠️ /upload_staff failed for ${pending.match.awayTeam} at ${pending.match.homeTeam}: could not fetch group data. Error: ${error.message}`
+      );
+      return;
+    }
+
+    const teamCheck = compareGroupTeamsToMatch(group.data, pending.match.homeTeam, pending.match.awayTeam);
+    if (teamCheck.canValidate && !teamCheck.isMatch) {
+      await notifyStaffTeamMismatch(interaction.guild, interaction.channel, pending.match, teamCheck);
+    }
+
+    await processUploadStaff(interaction, pending.league, pending.match, pending.link, group.data);
   },
 };

@@ -9,7 +9,13 @@ const {
   TextInputBuilder,
   TextInputStyle,
 } = require('discord.js');
-const { getLastAvailability, saveLastAvailability } = require('../services/userAvailabilityStore');
+const {
+  getLastAvailability,
+  saveLastAvailability,
+  getWeeklyAvailability,
+  saveWeeklyAvailability,
+  buildCurrentWeekKeyEST,
+} = require('../services/userAvailabilityStore');
 
 const DAYS = [
   { key: 'tues', label: 'Tues' },
@@ -68,6 +74,9 @@ function createSession(interaction) {
     selectedDayIndex: 0,
     dayState,
     hasLastSchedule: false,
+    weekKey: buildCurrentWeekKeyEST(),
+    hasWeeklySchedule: false,
+    weeklyMessageId: null,
     expiresAt: Date.now() + SESSION_TTL_MS,
   });
   return sessions.get(id);
@@ -119,6 +128,7 @@ function formatDayValue(state) {
 
 function buildSummary(session) {
   const lines = ['Set your availability schedule (EST):'];
+  lines.push(`Week Lock: ${session.weekKey}`);
   for (const day of DAYS) {
     const state = session.dayState[day.key];
     const value = formatDayValue(state);
@@ -355,10 +365,25 @@ module.exports = {
     }
 
     const session = createSession(interaction);
+    const weekEntry = await getWeeklyAvailability(
+      interaction.guildId,
+      interaction.channelId,
+      interaction.user.id,
+      session.weekKey
+    );
+    if (weekEntry?.dayState) {
+      session.dayState = normalizeStoredDayState(weekEntry.dayState);
+      session.hasWeeklySchedule = true;
+      session.weeklyMessageId = weekEntry.messageId || null;
+    }
+
     const last = await getLastAvailability(interaction.guildId, interaction.user.id);
     session.hasLastSchedule = Boolean(last?.dayState);
+    const weeklyNote = session.hasWeeklySchedule
+      ? '\n\nYou already have a schedule this week. Edit it below and submit to update your existing weekly post.'
+      : '';
     await interaction.reply({
-      content: buildSummary(session),
+      content: `${buildSummary(session)}${weeklyNote}`,
       components: buildComponents(session),
       flags: MessageFlags.Ephemeral,
     });
@@ -521,13 +546,37 @@ module.exports = {
         return;
       }
 
-      await interaction.channel.send(buildPublicScheduleMessage(interaction.user.id, session));
+      const publicMessage = buildPublicScheduleMessage(interaction.user.id, session);
+      let postedMessage = null;
+
+      if (session.weeklyMessageId) {
+        try {
+          const existing = await interaction.channel.messages.fetch(session.weeklyMessageId);
+          if (existing?.author?.id === interaction.client.user.id) {
+            await existing.edit(publicMessage);
+            postedMessage = existing;
+          }
+        } catch {
+          // Fallback to posting a fresh weekly message below.
+        }
+      }
+
+      if (!postedMessage) {
+        postedMessage = await interaction.channel.send(publicMessage);
+      }
+
       await saveLastAvailability(session.guildId, session.userId, {
         dayState: session.dayState,
       });
+      await saveWeeklyAvailability(session.guildId, session.channelId, session.userId, session.weekKey, {
+        dayState: session.dayState,
+        messageId: postedMessage.id,
+      });
       sessions.delete(session.id);
       await interaction.update({
-        content: 'Schedule posted in this channel.',
+        content: session.hasWeeklySchedule
+          ? 'Weekly schedule updated in this channel.'
+          : 'Schedule posted in this channel.',
         components: [],
       });
     }
