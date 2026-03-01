@@ -9,6 +9,8 @@ const {
   TextInputBuilder,
   TextInputStyle,
 } = require('discord.js');
+const fs = require('node:fs/promises');
+const path = require('node:path');
 const {
   getLastAvailability,
   saveLastAvailability,
@@ -28,8 +30,48 @@ const DAYS = [
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 const CUSTOM_PREFIX = 'availability';
 const NOTES_MODAL_PREFIX = `${CUSTOM_PREFIX}:notes_modal`;
+const SESSION_DATA_DIR = path.join(process.cwd(), '.data');
+const SESSION_STORE_PATH = path.join(SESSION_DATA_DIR, 'availability-sessions.json');
 
 const sessions = new Map();
+
+async function ensureSessionStoreFile() {
+  await fs.mkdir(SESSION_DATA_DIR, { recursive: true });
+  try {
+    await fs.access(SESSION_STORE_PATH);
+  } catch {
+    await fs.writeFile(SESSION_STORE_PATH, '{}', 'utf8');
+  }
+}
+
+async function readSessionStore() {
+  await ensureSessionStoreFile();
+  const raw = await fs.readFile(SESSION_STORE_PATH, 'utf8');
+  try {
+    return JSON.parse(raw || '{}');
+  } catch {
+    return {};
+  }
+}
+
+async function writeSessionStore(data) {
+  await ensureSessionStoreFile();
+  await fs.writeFile(SESSION_STORE_PATH, JSON.stringify(data, null, 2), 'utf8');
+}
+
+async function upsertSessionRecord(session) {
+  const store = await readSessionStore();
+  store[session.id] = session;
+  await writeSessionStore(store);
+}
+
+async function removeSessionRecord(sessionId) {
+  const store = await readSessionStore();
+  if (Object.prototype.hasOwnProperty.call(store, sessionId)) {
+    delete store[sessionId];
+    await writeSessionStore(store);
+  }
+}
 
 function buildTimeOptions() {
   const options = [];
@@ -53,7 +95,7 @@ function parseCustomId(customId) {
   return String(customId).split(':');
 }
 
-function createSession(interaction) {
+async function createSession(interaction) {
   const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
   const dayState = {};
   for (const day of DAYS) {
@@ -66,7 +108,7 @@ function createSession(interaction) {
     };
   }
 
-  sessions.set(id, {
+  const session = {
     id,
     guildId: interaction.guildId,
     channelId: interaction.channelId,
@@ -78,20 +120,35 @@ function createSession(interaction) {
     hasWeeklySchedule: false,
     weeklyMessageId: null,
     expiresAt: Date.now() + SESSION_TTL_MS,
-  });
-  return sessions.get(id);
+  };
+  sessions.set(id, session);
+  await upsertSessionRecord(session);
+  return session;
 }
 
-function getSession(sessionId) {
+async function getSession(sessionId) {
   const session = sessions.get(sessionId);
-  if (!session) {
+  if (session) {
+    if (session.expiresAt <= Date.now()) {
+      sessions.delete(sessionId);
+      await removeSessionRecord(sessionId);
+      return null;
+    }
+    return session;
+  }
+
+  const store = await readSessionStore();
+  const persisted = store[sessionId];
+  if (!persisted) {
     return null;
   }
-  if (session.expiresAt <= Date.now()) {
-    sessions.delete(sessionId);
+  if (persisted.expiresAt <= Date.now()) {
+    await removeSessionRecord(sessionId);
     return null;
   }
-  return session;
+
+  sessions.set(sessionId, persisted);
+  return persisted;
 }
 
 function formatHour(hour) {
@@ -317,7 +374,7 @@ function normalizeStoredDayState(storedDayState) {
 async function ensureSessionOwner(interaction, session) {
   if (!session) {
     if (!interaction.isModalSubmit?.()) {
-      const recovered = createSession(interaction);
+      const recovered = await createSession(interaction);
       const weekEntry = await getWeeklyAvailability(
         interaction.guildId,
         interaction.channelId,
@@ -332,6 +389,8 @@ async function ensureSessionOwner(interaction, session) {
 
       const last = await getLastAvailability(interaction.guildId, interaction.user.id);
       recovered.hasLastSchedule = Boolean(last?.dayState);
+      recovered.expiresAt = Date.now() + SESSION_TTL_MS;
+      await upsertSessionRecord(recovered);
 
       await interaction.reply({
         content: `${buildSummary(recovered)}\n\nYour previous form expired or restarted. A fresh editor is open below.`,
@@ -389,7 +448,7 @@ module.exports = {
       return;
     }
 
-    const session = createSession(interaction);
+    const session = await createSession(interaction);
     const weekEntry = await getWeeklyAvailability(
       interaction.guildId,
       interaction.channelId,
@@ -404,6 +463,8 @@ module.exports = {
 
     const last = await getLastAvailability(interaction.guildId, interaction.user.id);
     session.hasLastSchedule = Boolean(last?.dayState);
+    session.expiresAt = Date.now() + SESSION_TTL_MS;
+    await upsertSessionRecord(session);
     const weeklyNote = session.hasWeeklySchedule
       ? '\n\nYou already have a schedule this week. Edit it below and submit to update your existing weekly post.'
       : '';
@@ -427,7 +488,7 @@ module.exports = {
       return;
     }
 
-    const session = getSession(sessionId);
+    const session = await getSession(sessionId);
     if (!(await ensureSessionOwner(interaction, session))) {
       return;
     }
@@ -457,6 +518,7 @@ module.exports = {
       state.end = null;
     }
     session.expiresAt = Date.now() + SESSION_TTL_MS;
+    await upsertSessionRecord(session);
 
     await interaction.update({
       content: buildSummary(session),
@@ -474,7 +536,7 @@ module.exports = {
     const sessionId = parts[2];
     const dayKey = parts[3];
 
-    const session = getSession(sessionId);
+    const session = await getSession(sessionId);
     if (!(await ensureSessionOwner(interaction, session))) {
       return;
     }
@@ -497,6 +559,7 @@ module.exports = {
         state.anytime = true;
       }
       session.expiresAt = Date.now() + SESSION_TTL_MS;
+      await upsertSessionRecord(session);
 
       await interaction.update({
         content: buildSummary(session),
@@ -509,6 +572,7 @@ module.exports = {
       const nextIndex = action === 'prev' ? session.selectedDayIndex - 1 : session.selectedDayIndex + 1;
       session.selectedDayIndex = Math.max(0, Math.min(DAYS.length - 1, nextIndex));
       session.expiresAt = Date.now() + SESSION_TTL_MS;
+      await upsertSessionRecord(session);
 
       await interaction.update({
         content: buildSummary(session),
@@ -519,6 +583,7 @@ module.exports = {
 
     if (action === 'notes') {
       session.expiresAt = Date.now() + SESSION_TTL_MS;
+      await upsertSessionRecord(session);
       const currentDay = DAYS[session.selectedDayIndex];
       await interaction.showModal(buildNotesModal(session, currentDay.key));
       return;
@@ -532,6 +597,7 @@ module.exports = {
           content: `${buildSummary(session)}\n\nNo previous schedule found yet.`,
           components: buildComponents(session),
         });
+        await upsertSessionRecord(session);
         return;
       }
 
@@ -539,6 +605,7 @@ module.exports = {
       session.hasLastSchedule = true;
       session.selectedDayIndex = 0;
       session.expiresAt = Date.now() + SESSION_TTL_MS;
+      await upsertSessionRecord(session);
 
       await interaction.update({
         content: `${buildSummary(session)}\n\nLoaded your last schedule.`,
@@ -549,6 +616,7 @@ module.exports = {
 
     if (action === 'cancel') {
       sessions.delete(session.id);
+      await removeSessionRecord(session.id);
       try {
         await interaction.deferUpdate();
         await interaction.deleteReply();
@@ -598,6 +666,7 @@ module.exports = {
         messageId: postedMessage.id,
       });
       sessions.delete(session.id);
+      await removeSessionRecord(session.id);
       await interaction.update({
         content: session.hasWeeklySchedule
           ? 'Weekly schedule updated in this channel.'
@@ -615,7 +684,7 @@ module.exports = {
     const parts = String(interaction.customId).split(':');
     const sessionId = parts[2];
     const dayKey = parts[3];
-    const session = getSession(sessionId);
+    const session = await getSession(sessionId);
     if (!(await ensureSessionOwner(interaction, session))) {
       return;
     }
@@ -631,6 +700,7 @@ module.exports = {
 
     state.note = interaction.fields.getTextInputValue('notes')?.trim() || '';
     session.expiresAt = Date.now() + SESSION_TTL_MS;
+    await upsertSessionRecord(session);
 
     await interaction.reply({
       content: `${DAYS.find((d) => d.key === dayKey)?.label || 'Day'} note updated. Continue with the schedule form above.`,
