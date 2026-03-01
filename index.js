@@ -2,6 +2,7 @@ const { Client, GatewayIntentBits, Collection, Events, REST, Routes, MessageFlag
 require('dotenv').config();
 
 const scheduleCommand = require('./commands/schedule');
+const rescheduleCommand = require('./commands/reschedule');
 const rebuildWeekCommand = require('./commands/rebuild_week');
 const requestCommand = require('./commands/request');
 const suggestTimesCommand = require('./commands/suggest_times');
@@ -24,6 +25,7 @@ const client = new Client({
 
 client.commands = new Collection();
 client.commands.set(scheduleCommand.data.name, scheduleCommand);
+client.commands.set(rescheduleCommand.data.name, rescheduleCommand);
 client.commands.set(rebuildWeekCommand.data.name, rebuildWeekCommand);
 client.commands.set(requestCommand.data.name, requestCommand);
 client.commands.set(suggestTimesCommand.data.name, suggestTimesCommand);
@@ -123,6 +125,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      if (rescheduleCommand.handleButtonInteraction) {
+        await rescheduleCommand.handleButtonInteraction(interaction);
+      }
+
+      if (interaction.deferred || interaction.replied) {
+        return;
+      }
+
       if (requestCommand.handleButtonInteraction) {
         await requestCommand.handleButtonInteraction(interaction);
       }
@@ -171,6 +181,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       await scheduleCommand.handleModalSubmit(interaction);
+
+      if (interaction.deferred || interaction.replied) {
+        return;
+      }
+
+      if (rescheduleCommand.handleModalSubmit) {
+        await rescheduleCommand.handleModalSubmit(interaction);
+      }
     }
   } catch (error) {
     console.error('Interaction handler error:', error);

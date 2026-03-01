@@ -46,6 +46,7 @@ module.exports = {
 
       lines.push('', '**Staff / Admin**');
       add('/schedule', 'Schedule a match date/time or record forfeits.');
+      add('/reschedule', 'Update date/time for an already scheduled match (with confirmation).');
       add('/rebuild_week', 'Delete/recreate weekly matchup channels from RawSchedule.');
       add('/suggest', 'Parse posted availability and suggest best overlap times.');
       add('/upload_staff', 'Staff upload mode from any channel (select league/week/match if needed).');
