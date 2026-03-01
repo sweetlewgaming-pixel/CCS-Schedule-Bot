@@ -25,7 +25,7 @@ const DAYS = [
   { key: 'sat', label: 'Sat' },
   { key: 'sun', label: 'Sun' },
 ];
-const SESSION_TTL_MS = 30 * 60 * 1000;
+const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 const CUSTOM_PREFIX = 'availability';
 const NOTES_MODAL_PREFIX = `${CUSTOM_PREFIX}:notes_modal`;
 
@@ -316,6 +316,31 @@ function normalizeStoredDayState(storedDayState) {
 
 async function ensureSessionOwner(interaction, session) {
   if (!session) {
+    if (!interaction.isModalSubmit?.()) {
+      const recovered = createSession(interaction);
+      const weekEntry = await getWeeklyAvailability(
+        interaction.guildId,
+        interaction.channelId,
+        interaction.user.id,
+        recovered.weekKey
+      );
+      if (weekEntry?.dayState) {
+        recovered.dayState = normalizeStoredDayState(weekEntry.dayState);
+        recovered.hasWeeklySchedule = true;
+        recovered.weeklyMessageId = weekEntry.messageId || null;
+      }
+
+      const last = await getLastAvailability(interaction.guildId, interaction.user.id);
+      recovered.hasLastSchedule = Boolean(last?.dayState);
+
+      await interaction.reply({
+        content: `${buildSummary(recovered)}\n\nYour previous form expired or restarted. A fresh editor is open below.`,
+        components: buildComponents(recovered),
+        flags: MessageFlags.Ephemeral,
+      });
+      return false;
+    }
+
     if (interaction.deferred || interaction.replied) {
       await interaction.followUp({
         content: 'This availability session expired. Run /availability again.',
