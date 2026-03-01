@@ -119,6 +119,30 @@ async function mentionForTeam(guild, teamName) {
   return roleId ? `<@&${roleId}>` : `@${teamName}`;
 }
 
+async function getUploadCommandMention(guild) {
+  try {
+    if (guild?.commands?.fetch) {
+      const guildCommands = await guild.commands.fetch();
+      const guildCommand = guildCommands.find((command) => command.name === 'upload');
+      if (guildCommand) {
+        return `</upload:${guildCommand.id}>`;
+      }
+    }
+
+    if (guild?.client?.application?.commands?.fetch) {
+      const globalCommands = await guild.client.application.commands.fetch();
+      const globalCommand = globalCommands.find((command) => command.name === 'upload');
+      if (globalCommand) {
+        return `</upload:${globalCommand.id}>`;
+      }
+    }
+  } catch (_) {
+    // Fall back to plain command text.
+  }
+
+  return '`/upload`';
+}
+
 async function findMatchChannelByMatchId(guild, league, matchId) {
   await guild.channels.fetch();
 
@@ -242,9 +266,10 @@ async function pollMatchReminders(client) {
 
         const mentionA = await mentionForTeam(guild, match.awayTeam);
         const mentionB = await mentionForTeam(guild, match.homeTeam);
+        const uploadCommandMention = await getUploadCommandMention(guild);
         const message = `${mentionA} ${mentionB} MATCH TIME IS NOW: ${formatTimePmEst(
           match.time
-        )}. GOOD LUCK! PLEASE USE /UPLOAD TO POST YOUR BALLCHASING LINK WHEN YOU HAVE FINISHED THE MATCH.`;
+        )}. Good luck! **Please use ${uploadCommandMention} to post your ballchasing link when you have finished the match.**`;
 
         await channel.send(message);
         state.posted[key] = Date.now();
