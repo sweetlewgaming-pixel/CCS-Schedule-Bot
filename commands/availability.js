@@ -373,30 +373,30 @@ function normalizeStoredDayState(storedDayState) {
 
 async function ensureSessionOwner(interaction, session) {
   if (!session) {
-    if (!interaction.isModalSubmit?.()) {
-      const recovered = await createSession(interaction);
-      const weekEntry = await getWeeklyAvailability(
-        interaction.guildId,
-        interaction.channelId,
-        interaction.user.id,
-        recovered.weekKey
-      );
-      if (weekEntry?.dayState) {
-        recovered.dayState = normalizeStoredDayState(weekEntry.dayState);
-        recovered.hasWeeklySchedule = true;
-        recovered.weeklyMessageId = weekEntry.messageId || null;
-      }
+    const recovered = await createSession(interaction);
+    const weekEntry = await getWeeklyAvailability(
+      interaction.guildId,
+      interaction.channelId,
+      interaction.user.id,
+      recovered.weekKey
+    );
+    if (weekEntry?.dayState) {
+      recovered.dayState = normalizeStoredDayState(weekEntry.dayState);
+      recovered.hasWeeklySchedule = true;
+      recovered.weeklyMessageId = weekEntry.messageId || null;
+    }
 
-      const last = await getLastAvailability(interaction.guildId, interaction.user.id);
-      recovered.hasLastSchedule = Boolean(last?.dayState);
-      recovered.expiresAt = Date.now() + SESSION_TTL_MS;
-      await upsertSessionRecord(recovered);
+    const last = await getLastAvailability(interaction.guildId, interaction.user.id);
+    recovered.hasLastSchedule = Boolean(last?.dayState);
+    recovered.expiresAt = Date.now() + SESSION_TTL_MS;
+    await upsertSessionRecord(recovered);
 
-      const payload = {
-        content: `${buildSummary(recovered)}\n\nYour previous form expired or restarted. This form was refreshed.`,
-        components: buildComponents(recovered),
-      };
+    const payload = {
+      content: `${buildSummary(recovered)}\n\nYour previous form expired or restarted. This form was refreshed.`,
+      components: buildComponents(recovered),
+    };
 
+    try {
       if (interaction.isButton?.() || interaction.isStringSelectMenu?.()) {
         await interaction.update(payload);
       } else {
@@ -405,19 +405,13 @@ async function ensureSessionOwner(interaction, session) {
           flags: MessageFlags.Ephemeral,
         });
       }
-      return false;
-    }
-
-    if (interaction.deferred || interaction.replied) {
-      await interaction.followUp({
-        content: 'This availability session expired. Run /availability again.',
-        flags: MessageFlags.Ephemeral,
-      });
-    } else {
-      await interaction.reply({
-        content: 'This availability session expired. Run /availability again.',
-        flags: MessageFlags.Ephemeral,
-      });
+    } catch {
+      if (!interaction.deferred && !interaction.replied) {
+        await interaction.reply({
+          ...payload,
+          flags: MessageFlags.Ephemeral,
+        });
+      }
     }
     return false;
   }
