@@ -5,6 +5,7 @@ const { ChannelType } = require('discord.js');
 const { getScheduledMatches } = require('./googleSheets');
 const { getRoleIdByTeamName } = require('../utils/teamRoles');
 const { CATEGORY_NAMES } = require('./scheduleChannels');
+const { slugifyTeamName } = require('../utils/slugify');
 
 const LEAGUES = ['CCS', 'CPL', 'CAS', 'CNL'];
 const POLL_INTERVAL_MS = 60 * 1000;
@@ -153,6 +154,38 @@ async function findMatchChannelByMatchId(guild, league, matchId) {
   );
 }
 
+function buildMatchupChannelCandidates(homeTeam, awayTeam) {
+  const awayAtHome = `${slugifyTeamName(awayTeam)}-at-${slugifyTeamName(homeTeam)}`;
+  const homeAtAway = `${slugifyTeamName(homeTeam)}-at-${slugifyTeamName(awayTeam)}`;
+  return new Set([
+    awayAtHome,
+    `${awayAtHome}✅`,
+    `${awayAtHome}confirmed`,
+    homeAtAway,
+    `${homeAtAway}✅`,
+    `${homeAtAway}confirmed`,
+  ]);
+}
+
+async function findMatchChannelByTeams(guild, league, homeTeam, awayTeam) {
+  await guild.channels.fetch();
+  const categoryName = String(CATEGORY_NAMES[league] || '').trim().toLowerCase();
+  if (!categoryName) {
+    return null;
+  }
+
+  const candidates = buildMatchupChannelCandidates(homeTeam, awayTeam);
+  return (
+    guild.channels.cache.find((channel) => {
+      if (channel.type !== ChannelType.GuildText) {
+        return false;
+      }
+      const parentName = String(channel.parent?.name || '').trim().toLowerCase();
+      return parentName === categoryName && candidates.has(String(channel.name || '').trim());
+    }) || null
+  );
+}
+
 async function pollMatchReminders(client) {
   const state = loadState();
   const now = getNowInEastern();
@@ -188,8 +221,14 @@ async function pollMatchReminders(client) {
           continue;
         }
 
-        const channel = await findMatchChannelByMatchId(guild, league, match.matchId);
+        let channel = await findMatchChannelByMatchId(guild, league, match.matchId);
         if (!channel) {
+          channel = await findMatchChannelByTeams(guild, league, match.homeTeam, match.awayTeam);
+        }
+        if (!channel) {
+          console.log(
+            `Reminder skip: channel not found for ${league} ${match.matchId} (${match.awayTeam} at ${match.homeTeam})`
+          );
           continue;
         }
 
