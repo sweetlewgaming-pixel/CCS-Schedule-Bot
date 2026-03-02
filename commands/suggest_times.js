@@ -651,6 +651,148 @@ function computeOverlaps(userSchedules, options = {}) {
   return overlaps.sort((a, b) => b.duration - a.duration);
 }
 
+function countDaysInScheduleBlock(block) {
+  if (!block || typeof block !== 'object') {
+    return 0;
+  }
+  return DAY_KEYS.filter((day) => Array.isArray(block[day]) && block[day].length > 0).length;
+}
+
+function mergeParsedBlocks(blocks) {
+  const merged = {};
+  for (const block of blocks || []) {
+    for (const day of DAY_KEYS) {
+      if (Array.isArray(block?.[day])) {
+        merged[day] = block[day];
+      }
+    }
+  }
+  return merged;
+}
+
+function isFullScheduleBlock(block, handledDayLines) {
+  return countDaysInScheduleBlock(block) >= 3 || Number(handledDayLines || 0) >= 3;
+}
+
+function parseProposedTimeWindowsFromMessage(content) {
+  const text = String(content || '');
+  const dayMatch = text.match(/\*\*Day:\*\*\s*([^\n\r]+)/i);
+  const timeMatch = text.match(/\*\*Time:\*\*\s*([^\n\r]+)/i);
+  if (!dayMatch || !timeMatch) {
+    return [];
+  }
+
+  const dayToken = normalizeDayToken(dayMatch[1]);
+  if (!dayToken || !DAY_KEYS.includes(dayToken)) {
+    return [];
+  }
+
+  const parsed = parseAvailabilityExpression(timeMatch[1]);
+  if (!parsed || parsed.unavailable || !Array.isArray(parsed.ranges)) {
+    return [];
+  }
+
+  return parsed.ranges
+    .map((range) => ({
+      day: dayToken,
+      start: Number(range.start),
+      end: Number(range.end),
+    }))
+    .filter((range) => Number.isFinite(range.start) && Number.isFinite(range.end) && range.end > range.start);
+}
+
+function getReactionCount(message, emoji) {
+  return message.reactions?.cache?.find((reaction) => reaction.emoji?.name === emoji)?.count || 0;
+}
+
+function collectRejectedProposalWindows(messages, botUserId) {
+  const windows = [];
+  for (const message of messages) {
+    if (message.author?.id !== botUserId) {
+      continue;
+    }
+
+    const content = String(message.content || '');
+    if (!content.includes('**Scheduling request from**') || !content.includes('React with')) {
+      continue;
+    }
+
+    const windowsFromMessage = parseProposedTimeWindowsFromMessage(content);
+    if (!windowsFromMessage.length) {
+      continue;
+    }
+
+    const yesCount = getReactionCount(message, '✅');
+    const noCount = getReactionCount(message, '❌');
+    if (noCount <= yesCount) {
+      continue;
+    }
+
+    windows.push(...windowsFromMessage);
+  }
+
+  return windows;
+}
+
+function excludeWindowsFromOverlaps(overlaps, windows) {
+  if (!windows.length || !overlaps.length) {
+    return overlaps;
+  }
+
+  const byDay = new Map();
+  for (const window of windows) {
+    const day = String(window.day || '');
+    if (!byDay.has(day)) {
+      byDay.set(day, []);
+    }
+    byDay.get(day).push(window);
+  }
+
+  const result = [];
+  for (const overlap of overlaps) {
+    const windowsForDay = byDay.get(overlap.day) || [];
+    if (!windowsForDay.length) {
+      result.push(overlap);
+      continue;
+    }
+
+    let segments = [{ start: overlap.start, end: overlap.end }];
+    for (const window of windowsForDay) {
+      const nextSegments = [];
+      for (const segment of segments) {
+        if (window.end <= segment.start || window.start >= segment.end) {
+          nextSegments.push(segment);
+          continue;
+        }
+
+        if (window.start > segment.start) {
+          nextSegments.push({ start: segment.start, end: window.start });
+        }
+        if (window.end < segment.end) {
+          nextSegments.push({ start: window.end, end: segment.end });
+        }
+      }
+      segments = nextSegments;
+      if (!segments.length) {
+        break;
+      }
+    }
+
+    for (const segment of segments) {
+      if (segment.end > segment.start) {
+        result.push({
+          day: overlap.day,
+          start: segment.start,
+          end: segment.end,
+          duration: segment.end - segment.start,
+        });
+      }
+    }
+  }
+
+  return result.sort((a, b) => b.duration - a.duration);
+}
+
 async function fetchRecentMessages(channel, max = 300) {
   const all = [];
   let before;
@@ -813,7 +955,7 @@ module.exports = {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const messages = await fetchRecentMessages(interaction.channel, 300);
-    const allSchedules = [];
+    const latestScheduleByUser = new Map();
     const parseStatusByUser = new Map();
 
     for (const message of messages) {
@@ -855,12 +997,32 @@ module.exports = {
           continue;
         }
 
-        for (const block of parsedBlocks) {
-          allSchedules.push(block);
+        const mergedBlock = mergeParsedBlocks(parsedBlocks);
+        if (!countDaysInScheduleBlock(mergedBlock)) {
+          continue;
+        }
+
+        const isFull = isFullScheduleBlock(mergedBlock, handledLines);
+        const existing = latestScheduleByUser.get(name);
+        if (!existing) {
+          latestScheduleByUser.set(name, {
+            schedule: mergedBlock,
+            isFull,
+          });
+          continue;
+        }
+
+        // Keep the latest full schedule over a newer conversational/partial update.
+        if (!existing.isFull && isFull) {
+          latestScheduleByUser.set(name, {
+            schedule: mergedBlock,
+            isFull,
+          });
         }
       }
     }
 
+    const allSchedules = [...latestScheduleByUser.values()].map((entry) => entry.schedule);
     if (!allSchedules.length) {
       await interaction.editReply('No valid player schedule posts were found yet in this channel.');
       return;
@@ -883,8 +1045,14 @@ module.exports = {
       ? `\nCould not fully read schedules from: ${partiallyParsedUsers.join(', ')}`
       : '';
 
-    const preferredOverlaps = computeOverlaps(allSchedules, { allowDiscouraged: false });
-    const fallbackOverlaps = preferredOverlaps.length ? preferredOverlaps : computeOverlaps(allSchedules, { allowDiscouraged: true });
+    const rejectedProposalWindows = collectRejectedProposalWindows(messages, interaction.client.user.id);
+
+    const preferredOverlapsRaw = computeOverlaps(allSchedules, { allowDiscouraged: false });
+    const preferredOverlaps = excludeWindowsFromOverlaps(preferredOverlapsRaw, rejectedProposalWindows);
+    const fallbackRaw = preferredOverlaps.length
+      ? preferredOverlaps
+      : computeOverlaps(allSchedules, { allowDiscouraged: true });
+    const fallbackOverlaps = excludeWindowsFromOverlaps(fallbackRaw, rejectedProposalWindows);
     const usedDiscouragedFallback = !preferredOverlaps.length && fallbackOverlaps.length;
 
     const overlaps = fallbackOverlaps;
@@ -903,9 +1071,12 @@ module.exports = {
     const fallbackNote = usedDiscouragedFallback
       ? '\n(Used "would prefer not" / discouraged slots because no fully preferred overlap was found.)'
       : '';
+    const rejectedProposalNote = rejectedProposalWindows.length
+      ? `\n(Excluded ${rejectedProposalWindows.length} rejected /propose_time window(s) based on reactions.)`
+      : '';
 
     await interaction.channel.send(
-      `Suggested best overlap times based on submitted schedules (${allSchedules.length} schedule blocks considered):\n${lines.join('\n')}${fallbackNote}${confirmedNote}${partialParseNote}`
+      `Suggested best overlap times based on submitted schedules (${allSchedules.length} schedule blocks considered):\n${lines.join('\n')}${fallbackNote}${rejectedProposalNote}${confirmedNote}${partialParseNote}`
     );
     await interaction.editReply('Posted best overlap suggestions in this channel.');
   },
