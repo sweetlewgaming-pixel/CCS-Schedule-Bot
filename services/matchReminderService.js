@@ -9,6 +9,7 @@ const { slugifyTeamName } = require('../utils/slugify');
 
 const LEAGUES = ['CCS', 'CPL', 'CAS', 'CNL'];
 const POLL_INTERVAL_MS = 60 * 1000;
+const REMINDER_GRACE_MINUTES = 2;
 const STATE_PATH = path.join(__dirname, '..', 'data', 'reminder-state.json');
 const REMINDER_TIME_MODE = String(process.env.REMINDER_TIME_MODE || 'PM').trim().toUpperCase();
 const REMINDER_RULES = [
@@ -270,7 +271,9 @@ async function pollMatchReminders(client) {
         const formattedTime = formatTimePmEst(match.time);
 
         for (const rule of REMINDER_RULES) {
-          if (minutesUntil !== rule.offsetMinutes) {
+          const upperBound = rule.offsetMinutes;
+          const lowerBound = rule.offsetMinutes - REMINDER_GRACE_MINUTES;
+          if (!(minutesUntil <= upperBound && minutesUntil >= lowerBound)) {
             continue;
           }
 
@@ -304,6 +307,7 @@ async function pollMatchReminders(client) {
 
 function startMatchReminderService(client) {
   let running = false;
+  let timer = null;
 
   const run = async () => {
     if (running) {
@@ -319,8 +323,24 @@ function startMatchReminderService(client) {
     }
   };
 
+  const scheduleNextMinuteTick = () => {
+    const now = Date.now();
+    const msUntilNextMinute = POLL_INTERVAL_MS - (now % POLL_INTERVAL_MS);
+    timer = setTimeout(async () => {
+      await run();
+      scheduleNextMinuteTick();
+    }, msUntilNextMinute);
+  };
+
   run();
-  setInterval(run, POLL_INTERVAL_MS);
+  scheduleNextMinuteTick();
+
+  return () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+  };
 }
 
 module.exports = {
