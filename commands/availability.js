@@ -90,6 +90,7 @@ function buildTimeOptions() {
 }
 
 const TIME_OPTIONS = buildTimeOptions();
+const MIDNIGHT_END_OPTION = { label: '12 AM (Midnight)', value: 'midnight' };
 
 function parseCustomId(customId) {
   if (!String(customId).startsWith(`${CUSTOM_PREFIX}:`)) {
@@ -261,6 +262,10 @@ function buildComponents(session) {
       ...option,
       default: rangeEnd !== null && Number(option.value) === Number(rangeEnd),
     }));
+  endOptions.push({
+    ...MIDNIGHT_END_OPTION,
+    default: rangeStart !== null && rangeEnd === null,
+  });
 
   const startMenu = new StringSelectMenuBuilder()
     .setCustomId(`${CUSTOM_PREFIX}:start:${session.id}:${currentDay.key}`)
@@ -604,8 +609,22 @@ module.exports = {
       return;
     }
 
-    const selectedValue = normalizeTimeValue(interaction.values[0]);
-    if (selectedValue === null || selectedValue < 0 || selectedValue >= 24 * 60) {
+    const selectedRaw = interaction.values[0];
+    const selectedValue =
+      action === 'end' && selectedRaw === MIDNIGHT_END_OPTION.value
+        ? null
+        : normalizeTimeValue(selectedRaw);
+    if (
+      selectedValue !== null &&
+      (selectedValue < 0 || selectedValue >= 24 * 60)
+    ) {
+      await interaction.reply({
+        content: 'Invalid time selection.',
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    if (action === 'start' && selectedValue === null) {
       await interaction.reply({
         content: 'Invalid time selection.',
         flags: MessageFlags.Ephemeral,

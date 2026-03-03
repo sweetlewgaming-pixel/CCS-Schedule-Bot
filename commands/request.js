@@ -5,9 +5,10 @@ const {
 
 const { isAdminAuthorized } = require('../utils/permissions');
 const { getRoleIdByTeamName } = require('../utils/teamRoles');
+const MENTION_DEBUG_ENABLED = String(process.env.MENTION_DEBUG || '').trim().toLowerCase() === 'true';
 
 function cleanMatchupChannelName(name) {
-  return String(name || '').replace(/✅+$/u, '').replace(/confirmed$/i, '').trim();
+  return String(name || '').replace(/[\u2705]+$/u, '').replace(/confirmed$/i, '').trim();
 }
 
 function parseMatchupSlugsFromChannel(channelName) {
@@ -80,14 +81,32 @@ module.exports = {
       `**Day:** ${day}`,
       `**Time:** ${time}`,
     ];
-    lines.push('React with ✅ or ❌ below.');
+    lines.push('React with ? or ? below.');
 
+    const allowedRoleMentions = [roleAId, roleBId].filter(Boolean);
     await interaction.reply({
       content: lines.join('\n'),
+      allowedMentions: {
+        parse: ['users'],
+        roles: allowedRoleMentions,
+      },
     });
 
     const sent = await interaction.fetchReply();
-    await sent.react('✅').catch(() => {});
-    await sent.react('❌').catch(() => {});
+    if (MENTION_DEBUG_ENABLED) {
+      const recognizedRoleIds = [...(sent.mentions?.roles?.keys?.() || [])];
+      const expectedRoleIds = [roleAId, roleBId].filter(Boolean);
+      const missingRoleMentions = expectedRoleIds.filter((id) => !recognizedRoleIds.includes(id));
+      await interaction.followUp({
+        content:
+          `[mention-debug] expected roles: ${expectedRoleIds.length ? expectedRoleIds.join(', ') : 'none'} | ` +
+          `recognized in sent message: ${recognizedRoleIds.length ? recognizedRoleIds.join(', ') : 'none'} | ` +
+          `missing: ${missingRoleMentions.length ? missingRoleMentions.join(', ') : 'none'}`,
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+
+    await sent.react('?').catch(() => {});
+    await sent.react('?').catch(() => {});
   },
 };

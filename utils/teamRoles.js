@@ -77,6 +77,30 @@ function normalizeName(value) {
     .trim();
 }
 
+function singularizeToken(token) {
+  const value = String(token || '').trim().toLowerCase();
+  if (!value) {
+    return '';
+  }
+  if (value.endsWith('ies') && value.length > 3) {
+    return `${value.slice(0, -3)}y`;
+  }
+  if (value.endsWith('es') && value.length > 3) {
+    return value.slice(0, -2);
+  }
+  if (value.endsWith('s') && value.length > 2) {
+    return value.slice(0, -1);
+  }
+  return value;
+}
+
+function tokenizeNormalizedName(value) {
+  return normalizeName(value)
+    .split(' ')
+    .map((t) => singularizeToken(t))
+    .filter(Boolean);
+}
+
 const FULL_NAME_BY_NORMALIZED = new Map(
   KNOWN_FULL_TEAM_NAMES.map((name) => [normalizeName(name), name])
 );
@@ -156,6 +180,47 @@ async function getRoleIdByTeamName(guild, teamName) {
   );
   if (exact) {
     return exact.id;
+  }
+
+  // Fuzzy fallback for minor naming drift in role labels
+  // (for example singular/plural mascot differences).
+  const targetNames = [canonicalTeamName, teamName].filter(Boolean);
+  let fuzzyBestRole = null;
+  let fuzzyBestScore = 0;
+
+  for (const role of guild.roles.cache.values()) {
+    const roleTokens = tokenizeNormalizedName(role.name);
+    if (!roleTokens.length) {
+      continue;
+    }
+
+    let roleScore = 0;
+    for (const targetName of targetNames) {
+      const targetTokens = tokenizeNormalizedName(targetName);
+      if (!targetTokens.length) {
+        continue;
+      }
+
+      const allTokensPresent = targetTokens.every((token) => roleTokens.includes(token));
+      if (!allTokensPresent) {
+        continue;
+      }
+
+      // Prefer exact token-set matches over partial contains.
+      const score = targetTokens.length === roleTokens.length ? 720 : 680;
+      if (score > roleScore) {
+        roleScore = score;
+      }
+    }
+
+    if (roleScore > fuzzyBestScore) {
+      fuzzyBestScore = roleScore;
+      fuzzyBestRole = role;
+    }
+  }
+
+  if (fuzzyBestScore > 0) {
+    return fuzzyBestRole.id;
   }
 
   const teamSlug = slugifyTeamName(canonicalTeamName || teamName);

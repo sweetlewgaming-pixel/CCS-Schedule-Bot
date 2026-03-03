@@ -270,7 +270,10 @@ function inferLeagueFromParentCategory(channel) {
 
 async function mentionForTeam(guild, teamName) {
   const roleId = await getRoleIdByTeamName(guild, teamName);
-  return roleId ? `<@&${roleId}>` : `@${teamName}`;
+  return {
+    roleId,
+    mention: roleId ? `<@&${roleId}>` : `@${teamName}`,
+  };
 }
 
 async function resolveAnnouncementChannel(interaction, league) {
@@ -412,8 +415,11 @@ function parseOverwriteButton(customId) {
 
 async function publishScheduleResult(interaction, league, week, time, date, match) {
   const { homeTeam, awayTeam } = match;
-  const homeMention = await mentionForTeam(interaction.guild, homeTeam);
-  const awayMention = await mentionForTeam(interaction.guild, awayTeam);
+  const homeMentionData = await mentionForTeam(interaction.guild, homeTeam);
+  const awayMentionData = await mentionForTeam(interaction.guild, awayTeam);
+  const homeMention = homeMentionData.mention;
+  const awayMention = awayMentionData.mention;
+  const roleMentions = [homeMentionData.roleId, awayMentionData.roleId].filter(Boolean);
   const scheduledWhen = `${formatScheduleTime(time)} ${formatScheduleDate(date)}`.toUpperCase();
 
   const output = `${awayMention} @ ${homeMention} ${formatScheduleTime(time)} ${formatScheduleDate(date)}`;
@@ -423,7 +429,13 @@ async function publishScheduleResult(interaction, league, week, time, date, matc
 
   const targetChannel = await resolveAnnouncementChannel(interaction, league);
   if (targetChannel) {
-    await targetChannel.send(output);
+    await targetChannel.send({
+      content: output,
+      allowedMentions: {
+        parse: ['users'],
+        roles: roleMentions,
+      },
+    });
   }
 
   const matchupChannel = await findMatchupChannelForMatch(interaction.guild, league, homeTeam, awayTeam);

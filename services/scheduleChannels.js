@@ -278,9 +278,14 @@ async function applyRebuildPlan(guild, plan) {
       const mentionB = roleBId ? `<@&${roleBId}>` : `@${spec.teamB}`;
       const availabilityCommandMention = await getAvailabilityCommandMention(guild);
 
-      await created.send(
-        `${mentionA} ${mentionB}\n\nPlease put your schedule in this format for this week:\n\nTues: Time-Time\nWed: Time-Time\nThurs: Time-Time\nFri: Time-Time\nSat: Time-Time\nSun: Time-Time\n\nALL IN EST PLEASE\n\n**Please use ${availabilityCommandMention} to make your schedule. This massively helps out the admin team and would be greatly appreciated!**`
-      );
+      await created.send({
+        content:
+          `${mentionA} ${mentionB}\n\nPlease put your schedule in this format for this week:\n\nTues: Time-Time\nWed: Time-Time\nThurs: Time-Time\nFri: Time-Time\nSat: Time-Time\nSun: Time-Time\n\nALL IN EST PLEASE\n\n**Please use ${availabilityCommandMention} to make your schedule. This massively helps out the admin team and would be greatly appreciated!**`,
+        allowedMentions: {
+          parse: ['users'],
+          roles: [roleAId, roleBId].filter(Boolean),
+        },
+      });
     }
 
     await wait(CREATE_DELAY_MS);

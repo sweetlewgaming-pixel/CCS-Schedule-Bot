@@ -145,7 +145,10 @@ function buildConfirmRow(token) {
 
 async function mentionForTeam(guild, teamName) {
   const roleId = await getRoleIdByTeamName(guild, teamName);
-  return roleId ? `<@&${roleId}>` : `@${teamName}`;
+  return {
+    roleId,
+    mention: roleId ? `<@&${roleId}>` : `@${teamName}`,
+  };
 }
 
 async function resolveAnnouncementChannel(interaction, league) {
@@ -207,8 +210,11 @@ async function deletePreviousScheduledPost(channel, botUserId, homeMention, away
 }
 
 async function publishRescheduledPosts(interaction, league, payload, updatedMatch) {
-  const homeMention = await mentionForTeam(interaction.guild, updatedMatch.homeTeam);
-  const awayMention = await mentionForTeam(interaction.guild, updatedMatch.awayTeam);
+  const homeMentionData = await mentionForTeam(interaction.guild, updatedMatch.homeTeam);
+  const awayMentionData = await mentionForTeam(interaction.guild, updatedMatch.awayTeam);
+  const homeMention = homeMentionData.mention;
+  const awayMention = awayMentionData.mention;
+  const roleMentions = [homeMentionData.roleId, awayMentionData.roleId].filter(Boolean);
   const newLine = `RESCHEDULED: ${homeMention} ${awayMention} ${formatScheduleTime(payload.newTime)} ${formatScheduleDate(payload.newDate)}`;
 
   const announcementChannel = await resolveAnnouncementChannel(interaction, league);
@@ -237,9 +243,21 @@ async function publishRescheduledPosts(interaction, league, payload, updatedMatc
     );
   }
 
-  await interaction.channel.send(newLine);
+  await interaction.channel.send({
+    content: newLine,
+    allowedMentions: {
+      parse: ['users'],
+      roles: roleMentions,
+    },
+  });
   if (announcementChannel && announcementChannel.id !== interaction.channel.id) {
-    await announcementChannel.send(newLine);
+    await announcementChannel.send({
+      content: newLine,
+      allowedMentions: {
+        parse: ['users'],
+        roles: roleMentions,
+      },
+    });
   }
 }
 
@@ -438,4 +456,3 @@ module.exports = {
     });
   },
 };
-

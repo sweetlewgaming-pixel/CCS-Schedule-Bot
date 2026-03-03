@@ -147,7 +147,10 @@ function hasMatchBeenPlayed(match) {
 
 async function mentionForTeam(guild, teamName) {
   const roleId = await getRoleIdByTeamName(guild, teamName);
-  return roleId ? `<@&${roleId}>` : `@${teamName}`;
+  return {
+    roleId,
+    mention: roleId ? `<@&${roleId}>` : `@${teamName}`,
+  };
 }
 
 async function findMatchChannelByMatchId(guild, league, matchId) {
@@ -275,8 +278,11 @@ async function pollMatchReminders(client) {
           continue;
         }
 
-        const mentionA = await mentionForTeam(guild, match.awayTeam);
-        const mentionB = await mentionForTeam(guild, match.homeTeam);
+        const mentionAData = await mentionForTeam(guild, match.awayTeam);
+        const mentionBData = await mentionForTeam(guild, match.homeTeam);
+        const mentionA = mentionAData.mention;
+        const mentionB = mentionBData.mention;
+        const roleMentions = [mentionAData.roleId, mentionBData.roleId].filter(Boolean);
         const formattedTime = formatTimePmEst(match.time);
 
         for (const rule of REMINDER_RULES) {
@@ -301,7 +307,13 @@ async function pollMatchReminders(client) {
             message = `${mentionA} ${mentionB} Match time is now: ${formattedTime}. Good luck! **Please use ${uploadCommandMention} to post your ballchasing link when you have finished the match.**`;
           }
 
-          await channel.send(message);
+          await channel.send({
+            content: message,
+            allowedMentions: {
+              parse: ['users'],
+              roles: roleMentions,
+            },
+          });
           state.posted[key] = Date.now();
           stateChanged = true;
         }

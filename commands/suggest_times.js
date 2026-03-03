@@ -670,6 +670,31 @@ function mergeParsedBlocks(blocks) {
   return merged;
 }
 
+function getTotalAvailabilityMinutes(schedule) {
+  let total = 0;
+  for (const day of DAY_KEYS) {
+    const ranges = Array.isArray(schedule?.[day]) ? schedule[day] : [];
+    for (const range of ranges) {
+      const start = Number(range.start);
+      const end = Number(range.end);
+      if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+        total += end - start;
+      }
+    }
+  }
+  return total;
+}
+
+function formatDurationMinutes(totalMinutes) {
+  const mins = Math.max(0, Number(totalMinutes) || 0);
+  const hours = Math.floor(mins / 60);
+  const remainder = mins % 60;
+  if (remainder === 0) {
+    return `${hours}h`;
+  }
+  return `${hours}h ${remainder}m`;
+}
+
 function isFullScheduleBlock(block, handledDayLines) {
   return countDaysInScheduleBlock(block) >= 3 || Number(handledDayLines || 0) >= 3;
 }
@@ -1103,7 +1128,8 @@ module.exports = {
       }
     }
 
-    const allSchedules = [...latestScheduleByUser.values()].map((entry) => entry.schedule);
+    const scheduleEntries = [...latestScheduleByUser.values()];
+    const allSchedules = scheduleEntries.map((entry) => entry.schedule);
     if (!allSchedules.length) {
       await interaction.editReply('No valid player schedule posts were found yet in this channel.');
       return;
@@ -1139,8 +1165,26 @@ module.exports = {
     const overlaps = fallbackOverlaps;
     if (!overlaps.length) {
       const timeskeeperMention = await resolveTimeskeeperMention(interaction.guild);
+      const withAvailability = scheduleEntries
+        .map((entry) => ({
+          label: entry.label || 'Unknown',
+          total: getTotalAvailabilityMinutes(entry.schedule),
+        }))
+        .filter((entry) => Number.isFinite(entry.total));
+      const minAvailability = withAvailability.length
+        ? Math.min(...withAvailability.map((entry) => entry.total))
+        : null;
+      const leastAvailableUsers = minAvailability === null
+        ? []
+        : withAvailability
+            .filter((entry) => entry.total === minAvailability)
+            .map((entry) => entry.label)
+            .slice(0, 10);
+      const leastAvailabilityNote = leastAvailableUsers.length
+        ? `\nLeast availability this week: ${leastAvailableUsers.join(', ')} (${formatDurationMinutes(minAvailability)} total).`
+        : '';
       await interaction.channel.send(
-        `${timeskeeperMention} No overlapping availability found in this channel based on submitted player schedules.${confirmedNote}${partialParseNote}`
+        `${timeskeeperMention} No overlapping availability found in this channel based on submitted player schedules.${leastAvailabilityNote}${confirmedNote}${partialParseNote}`
       );
       await interaction.editReply('No common overlap found. I pinged the CCS timeskeeper role.');
       return;
