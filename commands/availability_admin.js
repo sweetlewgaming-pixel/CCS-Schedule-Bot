@@ -31,12 +31,15 @@ const sessions = new Map();
 function buildTimeOptions() {
   const options = [];
   for (let hour = 12; hour < 24; hour += 1) {
-    const meridiem = hour >= 12 ? 'PM' : 'AM';
-    const hour12 = ((hour + 11) % 12) + 1;
-    options.push({
-      label: `${hour12}:00 ${meridiem}`,
-      value: String(hour),
-    });
+    for (const minute of [0, 30]) {
+      const totalMinutes = hour * 60 + minute;
+      const meridiem = hour >= 12 ? 'PM' : 'AM';
+      const hour12 = ((hour + 11) % 12) + 1;
+      options.push({
+        label: `${hour12}:${String(minute).padStart(2, '0')} ${meridiem}`,
+        value: String(totalMinutes),
+      });
+    }
   }
   return options;
 }
@@ -57,6 +60,9 @@ function createSession(interaction) {
     dayState[day.key] = {
       start: null,
       end: null,
+      secondStart: null,
+      secondEnd: null,
+      secondEnabled: false,
       na: false,
       anytime: true,
       note: '',
@@ -70,6 +76,7 @@ function createSession(interaction) {
     userId: interaction.user.id,
     targetUserId: interaction.user.id,
     selectedDayIndex: 0,
+    activeRange: 1,
     dayState,
     hasLastSchedule: false,
     expiresAt: Date.now() + SESSION_TTL_MS,
@@ -89,14 +96,30 @@ function getSession(sessionId) {
   return session;
 }
 
-function formatHour(hour) {
-  const n = Number(hour);
-  if (!Number.isInteger(n) || n < 0 || n > 23) {
+function normalizeTimeValue(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
     return null;
   }
-  const meridiem = n >= 12 ? 'PM' : 'AM';
-  const hour12 = ((n + 11) % 12) + 1;
-  return `${hour12}:00 ${meridiem}`;
+  if (Number.isInteger(n) && n >= 0 && n <= 23) {
+    return n * 60;
+  }
+  if (Number.isInteger(n) && n >= 0 && n < 24 * 60) {
+    return n;
+  }
+  return null;
+}
+
+function formatHour(value) {
+  const n = normalizeTimeValue(value);
+  if (n === null) {
+    return null;
+  }
+  const hour = Math.floor(n / 60);
+  const minute = n % 60;
+  const meridiem = hour >= 12 ? 'PM' : 'AM';
+  const hour12 = ((hour + 11) % 12) + 1;
+  return `${hour12}:${String(minute).padStart(2, '0')} ${meridiem}`;
 }
 
 function formatRange(start, end) {
@@ -233,6 +256,9 @@ function importScheduleTextIntoSession(session, rawText) {
       state.anytime = false;
       state.start = null;
       state.end = null;
+      state.secondStart = null;
+      state.secondEnd = null;
+      state.secondEnabled = false;
       updatedCount += 1;
       continue;
     }
@@ -243,6 +269,9 @@ function importScheduleTextIntoSession(session, rawText) {
       state.anytime = true;
       state.start = null;
       state.end = null;
+      state.secondStart = null;
+      state.secondEnd = null;
+      state.secondEnabled = false;
       updatedCount += 1;
       continue;
     }
@@ -252,23 +281,26 @@ function importScheduleTextIntoSession(session, rawText) {
       continue;
     }
 
-    let startHour = Math.floor(Number(best.start) / 60);
-    let endHour = Number(best.end) >= 24 * 60 ? null : Math.ceil(Number(best.end) / 60);
-    if (!Number.isFinite(startHour)) {
+    let startMinutes = Math.floor(Number(best.start) / 30) * 30;
+    let endMinutes = Number(best.end) >= 24 * 60 ? null : Math.ceil(Number(best.end) / 30) * 30;
+    if (!Number.isFinite(startMinutes)) {
       continue;
     }
-    startHour = Math.max(12, Math.min(23, startHour));
-    if (endHour !== null) {
-      endHour = Math.max(12, Math.min(23, endHour));
-      if (endHour <= startHour) {
-        endHour = null;
+    startMinutes = Math.max(12 * 60, Math.min(23 * 60 + 30, startMinutes));
+    if (endMinutes !== null) {
+      endMinutes = Math.max(12 * 60, Math.min(23 * 60 + 30, endMinutes));
+      if (endMinutes <= startMinutes) {
+        endMinutes = null;
       }
     }
 
     state.na = false;
     state.anytime = false;
-    state.start = startHour;
-    state.end = endHour;
+    state.start = startMinutes;
+    state.end = endMinutes;
+    state.secondStart = null;
+    state.secondEnd = null;
+    state.secondEnabled = false;
     updatedCount += 1;
   }
 
@@ -282,10 +314,18 @@ function formatDayValue(state) {
   if (state.anytime) {
     return 'Anytime';
   }
-  if (state.start !== null && state.end === null) {
-    return `${formatHour(state.start)} - 12:00 AM`;
+  const ranges = [];
+  if (state.start !== null) {
+    ranges.push(state.end === null ? `${formatHour(state.start)} - 12:00 AM` : formatRange(state.start, state.end));
   }
-  return formatRange(state.start, state.end);
+  if (state.secondEnabled && state.secondStart !== null) {
+    ranges.push(
+      state.secondEnd === null
+        ? `${formatHour(state.secondStart)} - 12:00 AM`
+        : formatRange(state.secondStart, state.secondEnd)
+    );
+  }
+  return ranges.length ? ranges.join(', ') : 'Time-Time';
 }
 
 function buildSummary(session) {
@@ -302,29 +342,56 @@ function buildSummary(session) {
 function buildComponents(session) {
   const currentDay = DAYS[session.selectedDayIndex];
   const state = session.dayState[currentDay.key];
-  const startOptions = TIME_OPTIONS.map((option) => ({
+  const editingSecond = Number(session.activeRange) === 2;
+  const rangeStartKey = editingSecond ? 'secondStart' : 'start';
+  const rangeEndKey = editingSecond ? 'secondEnd' : 'end';
+  const rangeStart = state[rangeStartKey];
+  const rangeEnd = state[rangeEndKey];
+  const secondMinStart = state.end;
+  const secondRangeReady = state.secondEnabled && normalizeTimeValue(secondMinStart) !== null;
+  const startPool = editingSecond
+    ? secondRangeReady
+      ? TIME_OPTIONS.filter((option) => Number(option.value) > Number(secondMinStart))
+      : []
+    : TIME_OPTIONS;
+  const startOptions = startPool.map((option) => ({
     ...option,
-    default: state.start !== null && Number(option.value) === Number(state.start),
+    default: rangeStart !== null && Number(option.value) === Number(rangeStart),
   }));
+  const safeStartOptions = startOptions.length
+    ? startOptions
+    : TIME_OPTIONS.map((option) => ({ ...option, default: false }));
   const endOptions = TIME_OPTIONS
-    .filter((option) => state.start === null || Number(option.value) > Number(state.start))
+    .filter((option) => rangeStart === null || Number(option.value) > Number(rangeStart))
     .map((option) => ({
       ...option,
-      default: state.end !== null && Number(option.value) === Number(state.end),
+      default: rangeEnd !== null && Number(option.value) === Number(rangeEnd),
     }));
 
   const startMenu = new StringSelectMenuBuilder()
     .setCustomId(`${CUSTOM_PREFIX}:start:${session.id}:${currentDay.key}`)
-    .setPlaceholder(`Start time (${currentDay.label})`)
-    .setOptions(startOptions);
+    .setPlaceholder(
+      editingSecond
+        ? secondRangeReady
+          ? `2nd start (${currentDay.label}) - after ${formatHour(secondMinStart)}`
+          : `2nd start (${currentDay.label}) - set first range end first`
+        : `Start time (${currentDay.label})`
+    )
+    .setDisabled(editingSecond && !secondRangeReady)
+    .setOptions(safeStartOptions);
 
   const endMenu = new StringSelectMenuBuilder()
     .setCustomId(`${CUSTOM_PREFIX}:end:${session.id}:${currentDay.key}`)
     .setPlaceholder(
-      state.start === null
-        ? `End time (${currentDay.label})`
-        : `End time (${currentDay.label}) - after ${formatHour(state.start)}`
+      rangeStart === null
+        ? editingSecond
+          ? `2nd end (${currentDay.label})`
+          : `End time (${currentDay.label})`
+        : editingSecond
+          ? `2nd end (${currentDay.label}) - after ${formatHour(rangeStart)}`
+          : `End time (${currentDay.label}) - after ${formatHour(rangeStart)}`
     )
+    .setDisabled(editingSecond && !secondRangeReady)
     .setOptions(endOptions);
 
   const naButton = new ButtonBuilder()
@@ -359,6 +426,22 @@ function buildComponents(session) {
     .setCustomId(`${CUSTOM_PREFIX}:import:${session.id}`)
     .setStyle(ButtonStyle.Secondary)
     .setLabel('Import Text');
+  
+  const rangeButton = new ButtonBuilder()
+    .setCustomId(`${CUSTOM_PREFIX}:range:${session.id}:${currentDay.key}`)
+    .setStyle(ButtonStyle.Primary)
+    .setLabel(
+      !state.secondEnabled
+        ? `Add 2nd Time (${currentDay.label})`
+        : editingSecond
+          ? `Edit 1st Time (${currentDay.label})`
+          : `Edit 2nd Time (${currentDay.label})`
+    );
+  
+  const clearButton = new ButtonBuilder()
+    .setCustomId(`${CUSTOM_PREFIX}:clear:${session.id}:${currentDay.key}`)
+    .setStyle(ButtonStyle.Secondary)
+    .setLabel(editingSecond ? `Clear 2nd (${currentDay.label})` : `Clear 1st (${currentDay.label})`);
 
   const submitButton = new ButtonBuilder()
     .setCustomId(`${CUSTOM_PREFIX}:submit:${session.id}`)
@@ -371,10 +454,10 @@ function buildComponents(session) {
     .setLabel('Cancel');
 
   return [
-    new ActionRowBuilder().addComponents(useLastButton),
+    new ActionRowBuilder().addComponents(useLastButton, importButton, clearButton),
     new ActionRowBuilder().addComponents(startMenu),
     new ActionRowBuilder().addComponents(endMenu),
-    new ActionRowBuilder().addComponents(naButton, notesButton, importButton, prevButton, nextButton),
+    new ActionRowBuilder().addComponents(naButton, notesButton, prevButton, nextButton, rangeButton),
     new ActionRowBuilder().addComponents(submitButton, cancelButton),
   ];
 }
@@ -442,6 +525,22 @@ function validateSession(session) {
     if (Number(state.end) <= Number(state.start)) {
       return `${day.label} end time must be after start time.`;
     }
+
+    if (!state.secondEnabled) {
+      continue;
+    }
+    if (state.end === null) {
+      return `${day.label} second time frame requires a first range end time.`;
+    }
+    if (state.secondStart === null && state.secondEnd !== null) {
+      return `${day.label} second range has an end time without a start time.`;
+    }
+    if (state.secondStart !== null && Number(state.secondStart) <= Number(state.end)) {
+      return `${day.label} second start must be after first range end.`;
+    }
+    if (state.secondStart !== null && state.secondEnd !== null && Number(state.secondEnd) <= Number(state.secondStart)) {
+      return `${day.label} second end time must be after second start time.`;
+    }
   }
   return null;
 }
@@ -479,8 +578,8 @@ function normalizeStoredDayState(storedDayState) {
   const normalized = {};
   for (const day of DAYS) {
     const incoming = storedDayState?.[day.key] || {};
-    const normalizedStart = Number.isInteger(Number(incoming.start)) ? Number(incoming.start) : null;
-    let normalizedEnd = Number.isInteger(Number(incoming.end)) ? Number(incoming.end) : null;
+    const normalizedStart = normalizeTimeValue(incoming.start);
+    let normalizedEnd = normalizeTimeValue(incoming.end);
 
     if (normalizedStart !== null && normalizedEnd === 0) {
       normalizedEnd = null;
@@ -489,6 +588,9 @@ function normalizeStoredDayState(storedDayState) {
     normalized[day.key] = {
       start: normalizedStart,
       end: normalizedEnd,
+      secondStart: normalizeTimeValue(incoming.secondStart),
+      secondEnd: normalizeTimeValue(incoming.secondEnd),
+      secondEnabled: Boolean(incoming.secondEnabled),
       na: Boolean(incoming.na),
       anytime: Boolean(incoming.anytime),
       note: String(incoming.note || ''),
@@ -598,8 +700,8 @@ module.exports = {
       return;
     }
 
-    const selectedValue = Number(interaction.values[0]);
-    if (!Number.isInteger(selectedValue) || selectedValue < 0 || selectedValue > 23) {
+    const selectedValue = normalizeTimeValue(interaction.values[0]);
+    if (selectedValue === null || selectedValue < 0 || selectedValue >= 24 * 60) {
       await interaction.reply({
         content: 'Invalid time selection.',
         flags: MessageFlags.Ephemeral,
@@ -607,11 +709,21 @@ module.exports = {
       return;
     }
 
-    state[action] = selectedValue;
+    const editingSecond = Number(session.activeRange) === 2;
+    const startKey = editingSecond ? 'secondStart' : 'start';
+    const endKey = editingSecond ? 'secondEnd' : 'end';
+    state[action === 'start' ? startKey : endKey] = selectedValue;
     state.na = false;
     state.anytime = false;
-    if (action === 'start' && state.end !== null && Number(state.end) <= Number(state.start)) {
+    if (!editingSecond && action === 'start' && state.end !== null && Number(state.end) <= Number(state.start)) {
       state.end = null;
+    }
+    if (editingSecond && action === 'start' && state.secondEnd !== null && Number(state.secondEnd) <= Number(state.secondStart)) {
+      state.secondEnd = null;
+    }
+    if (!editingSecond && state.secondEnabled && state.end !== null && state.secondStart !== null && Number(state.secondStart) <= Number(state.end)) {
+      state.secondStart = null;
+      state.secondEnd = null;
     }
     session.expiresAt = Date.now() + SESSION_TTL_MS;
 
@@ -647,12 +759,19 @@ module.exports = {
       if (state.na) {
         state.start = null;
         state.end = null;
+        state.secondStart = null;
+        state.secondEnd = null;
+        state.secondEnabled = false;
         state.anytime = false;
       } else {
         state.start = null;
         state.end = null;
+        state.secondStart = null;
+        state.secondEnd = null;
+        state.secondEnabled = false;
         state.anytime = true;
       }
+      session.activeRange = 1;
       session.expiresAt = Date.now() + SESSION_TTL_MS;
 
       await interaction.update({
@@ -665,6 +784,7 @@ module.exports = {
     if (action === 'prev' || action === 'next') {
       const nextIndex = action === 'prev' ? session.selectedDayIndex - 1 : session.selectedDayIndex + 1;
       session.selectedDayIndex = Math.max(0, Math.min(DAYS.length - 1, nextIndex));
+      session.activeRange = 1;
       session.expiresAt = Date.now() + SESSION_TTL_MS;
 
       await interaction.update({
@@ -687,6 +807,68 @@ module.exports = {
       return;
     }
 
+    if (action === 'range') {
+      const state = session.dayState[dayKey];
+      if (!state) {
+        await interaction.reply({ content: 'Invalid day selected.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      if (!state.secondEnabled) {
+        if (state.na || state.anytime || state.start === null || state.end === null) {
+          await interaction.reply({
+            content: 'Set a first time frame with both start and end before adding a second time frame.',
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+        state.secondEnabled = true;
+        state.secondStart = null;
+        state.secondEnd = null;
+        session.activeRange = 2;
+      } else {
+        session.activeRange = Number(session.activeRange) === 2 ? 1 : 2;
+      }
+
+      session.expiresAt = Date.now() + SESSION_TTL_MS;
+      await interaction.update({
+        content: buildSummary(session),
+        components: buildComponents(session),
+      });
+      return;
+    }
+
+    if (action === 'clear') {
+      const state = session.dayState[dayKey];
+      if (!state) {
+        await interaction.reply({ content: 'Invalid day selected.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      if (Number(session.activeRange) === 2) {
+        state.secondStart = null;
+        state.secondEnd = null;
+        state.secondEnabled = false;
+        session.activeRange = 1;
+      } else {
+        state.start = null;
+        state.end = null;
+        state.secondStart = null;
+        state.secondEnd = null;
+        state.secondEnabled = false;
+        state.na = false;
+        state.anytime = true;
+        session.activeRange = 1;
+      }
+
+      session.expiresAt = Date.now() + SESSION_TTL_MS;
+      await interaction.update({
+        content: buildSummary(session),
+        components: buildComponents(session),
+      });
+      return;
+    }
+
     if (action === 'use_last') {
       const last = await getLastAvailability(session.guildId, session.targetUserId);
       if (!last?.dayState) {
@@ -701,6 +883,7 @@ module.exports = {
       session.dayState = normalizeStoredDayState(last.dayState);
       session.hasLastSchedule = true;
       session.selectedDayIndex = 0;
+      session.activeRange = 1;
       session.expiresAt = Date.now() + SESSION_TTL_MS;
 
       await interaction.update({
