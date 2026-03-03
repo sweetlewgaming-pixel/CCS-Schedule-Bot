@@ -247,13 +247,14 @@ module.exports = {
       return;
     }
 
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
     let match;
     try {
       match = await getMatchByChannel(league, interaction.channel);
     } catch (error) {
-      await interaction.reply({
+      await interaction.editReply({
         content: `Could not load match data from Google Sheets.\nError: ${describeUploadError(error)}`,
-        flags: MessageFlags.Ephemeral,
       });
       await notifyStaffUploadFailure(
         interaction.guild,
@@ -263,10 +264,7 @@ module.exports = {
       return;
     }
     if (!match) {
-      await interaction.reply({
-        content: 'Could not determine match from this channel name.',
-        flags: MessageFlags.Ephemeral,
-      });
+      await interaction.editReply('Could not determine match from this channel name.');
       return;
     }
 
@@ -274,9 +272,8 @@ module.exports = {
     try {
       allowed = isAdminAuthorized(interaction) || (await isTeamMember(interaction, match.homeTeam, match.awayTeam));
     } catch (error) {
-      await interaction.reply({
+      await interaction.editReply({
         content: `Could not verify your team-role access.\nError: ${describeUploadError(error)}`,
-        flags: MessageFlags.Ephemeral,
       });
       await notifyStaffUploadFailure(
         interaction.guild,
@@ -286,14 +283,9 @@ module.exports = {
       return;
     }
     if (!allowed) {
-      await interaction.reply({
-        content: 'Only players on the two teams (or elevated staff roles) can use this command.',
-        flags: MessageFlags.Ephemeral,
-      });
+      await interaction.editReply('Only players on the two teams (or elevated staff roles) can use this command.');
       return;
     }
-
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     let duplicateCheckResult;
     try {

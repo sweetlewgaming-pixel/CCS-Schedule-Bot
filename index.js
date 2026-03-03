@@ -211,14 +211,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   } catch (error) {
     console.error('Interaction handler error:', error);
+    const debugMessage = String(error?.message || 'Unknown error').slice(0, 250);
+    const responseText = `Something went wrong while processing that action.\nError: ${debugMessage}`;
 
     if (interaction.deferred || interaction.replied) {
       await interaction
-        .followUp({ content: 'Something went wrong while processing that action.', flags: MessageFlags.Ephemeral })
+        .followUp({ content: responseText, flags: MessageFlags.Ephemeral })
         .catch(() => {});
     } else {
       await interaction
-        .reply({ content: 'Something went wrong while processing that action.', flags: MessageFlags.Ephemeral })
+        .reply({ content: responseText, flags: MessageFlags.Ephemeral })
         .catch(() => {});
     }
   }
