@@ -1,6 +1,7 @@
 const { MessageFlags, SlashCommandBuilder } = require('discord.js');
 
 const { isAdminAuthorized, normalizeRoleName } = require('../utils/permissions');
+const { getRoleIdByTeamName } = require('../utils/teamRoles');
 const {
   DAY_KEYS,
   parseSchedulesFromText: sharedParseSchedulesFromText,
@@ -66,6 +67,27 @@ function parseMatchupSlugsFromChannel(channelName) {
     leftSlug: parts[0].trim(),
     rightSlug: parts[1].trim(),
   };
+}
+
+function formatTeamLabel(value) {
+  return String(value || '')
+    .split('-')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function inferTeamLabelForMember(member, matchup) {
+  if (!member?.roles?.cache || !matchup) {
+    return null;
+  }
+  if (matchup.leftRoleId && member.roles.cache.has(matchup.leftRoleId)) {
+    return matchup.leftTeamLabel;
+  }
+  if (matchup.rightRoleId && member.roles.cache.has(matchup.rightRoleId)) {
+    return matchup.rightTeamLabel;
+  }
+  return null;
 }
 
 function normalizeDayToken(value) {
@@ -1039,6 +1061,23 @@ module.exports = {
       return;
     }
 
+    const [leftRoleId, rightRoleId] = await Promise.all([
+      getRoleIdByTeamName(interaction.guild, slugs.leftSlug),
+      getRoleIdByTeamName(interaction.guild, slugs.rightSlug),
+    ]);
+    const leftTeamLabel = leftRoleId
+      ? interaction.guild.roles.cache.get(leftRoleId)?.name || formatTeamLabel(slugs.leftSlug)
+      : formatTeamLabel(slugs.leftSlug);
+    const rightTeamLabel = rightRoleId
+      ? interaction.guild.roles.cache.get(rightRoleId)?.name || formatTeamLabel(slugs.rightSlug)
+      : formatTeamLabel(slugs.rightSlug);
+    const matchupRoleContext = {
+      leftRoleId,
+      rightRoleId,
+      leftTeamLabel,
+      rightTeamLabel,
+    };
+
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const messages = await fetchRecentMessages(interaction.channel, 300);
@@ -1051,6 +1090,7 @@ module.exports = {
       }
 
       const fallbackName = message.member?.displayName || message.author?.globalName || message.author?.username || 'Unknown';
+      const authorTeamLabel = inferTeamLabelForMember(message.member, matchupRoleContext);
       let pseudoMessages = [];
       if (message.author?.id === interaction.client.user.id) {
         const botBlocks = splitBotMentionScheduleBlocks(message.content || '');
@@ -1113,6 +1153,7 @@ module.exports = {
             schedule: mergedBlock,
             isFull,
             label,
+            teamLabel: authorTeamLabel,
           });
           continue;
         }
@@ -1123,7 +1164,10 @@ module.exports = {
             schedule: mergedBlock,
             isFull,
             label,
+            teamLabel: authorTeamLabel || existing.teamLabel || null,
           });
+        } else if (!existing.teamLabel && authorTeamLabel) {
+          existing.teamLabel = authorTeamLabel;
         }
       }
     }
@@ -1169,24 +1213,23 @@ module.exports = {
         .map((entry) => ({
           label: entry.label || 'Unknown',
           total: getTotalAvailabilityMinutes(entry.schedule),
+          teamLabel: entry.teamLabel || null,
         }))
         .filter((entry) => Number.isFinite(entry.total));
-      const minAvailability = withAvailability.length
-        ? Math.min(...withAvailability.map((entry) => entry.total))
-        : null;
-      const leastAvailableUsers = minAvailability === null
-        ? []
-        : withAvailability
-            .filter((entry) => entry.total === minAvailability)
-            .map((entry) => entry.label)
-            .slice(0, 10);
-      const leastAvailabilityNote = leastAvailableUsers.length
-        ? `\nLeast availability this week: ${leastAvailableUsers.join(', ')} (${formatDurationMinutes(minAvailability)} total).`
-        : '';
       await interaction.channel.send(
-        `${timeskeeperMention} No overlapping availability found in this channel based on submitted player schedules.${leastAvailabilityNote}${confirmedNote}${partialParseNote}`
+        `${timeskeeperMention} No overlapping availability found in this channel based on submitted player schedules.${confirmedNote}${partialParseNote}`
       );
-      await interaction.editReply('No common overlap found. I pinged the CCS timeskeeper role.');
+      const sortedAvailability = withAvailability
+        .sort((a, b) => (a.total - b.total) || a.label.localeCompare(b.label))
+        .map((entry) =>
+          `- ${entry.label}: ${formatDurationMinutes(entry.total)}${entry.teamLabel ? ` (${entry.teamLabel})` : ''}`
+        )
+        .join('\n');
+      await interaction.editReply(
+        sortedAvailability
+          ? `Availability totals (least to most):\n${sortedAvailability}`
+          : 'Availability totals (least to most):\n- none'
+      );
       return;
     }
 
