@@ -28,4 +28,4 @@ jobs:
           APP_DIR: ${{ secrets.ORACLE_APP_DIR }}
           APP_NAME: ccs-scheduler-bot
         run: |
-          ssh "${ORACLE_USER}@${ORACLE_HOST}" "set -e; cd '${APP_DIR}'; git fetch origin main; git reset --hard origin/main; npm ci; if pm2 describe '${APP_NAME}' >/dev/null 2>&1; then pm2 restart '${APP_NAME}' --update-env; else pm2 start index.js --name '${APP_NAME}'; fi; pm2 save; sleep 3; pm2 status; pm2 describe '${APP_NAME}'; tail -n 80 ~/.pm2/logs/${APP_NAME}-error.log || true; tail -n 40 ~/.pm2/logs/${APP_NAME}-out.log || true"
+          ssh "${ORACLE_USER}@${ORACLE_HOST}" "set -e; cd '${APP_DIR}'; git fetch origin main; git reset --hard origin/main; chmod +x ./scripts/start-bot.sh; npm ci --omit=dev; pm2 startOrReload ecosystem.config.js --update-env; pm2 save; sleep 3; pm2 status; pm2 describe '${APP_NAME}'; tail -n 80 ~/.pm2/logs/${APP_NAME}-error.log || true; tail -n 40 ~/.pm2/logs/${APP_NAME}-out.log || true"
