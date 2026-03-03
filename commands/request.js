@@ -6,6 +6,8 @@ const {
 const { isAdminAuthorized } = require('../utils/permissions');
 const { getRoleIdByTeamName } = require('../utils/teamRoles');
 const MENTION_DEBUG_ENABLED = String(process.env.MENTION_DEBUG || '').trim().toLowerCase() === 'true';
+const ACCEPT_EMOJI = '\u2705';
+const REJECT_EMOJI = '\u274C';
 
 function cleanMatchupChannelName(name) {
   return String(name || '').replace(/[\u2705]+$/u, '').replace(/confirmed$/i, '').trim();
@@ -81,7 +83,7 @@ module.exports = {
       `**Day:** ${day}`,
       `**Time:** ${time}`,
     ];
-    lines.push('React with ? or ? below.');
+    lines.push(`React with ${ACCEPT_EMOJI} or ${REJECT_EMOJI} below.`);
 
     const allowedRoleMentions = [roleAId, roleBId].filter(Boolean);
     await interaction.reply({
@@ -106,7 +108,7 @@ module.exports = {
       });
     }
 
-    await sent.react('?').catch(() => {});
-    await sent.react('?').catch(() => {});
+    await sent.react(ACCEPT_EMOJI).catch(() => {});
+    await sent.react(REJECT_EMOJI).catch(() => {});
   },
 };
