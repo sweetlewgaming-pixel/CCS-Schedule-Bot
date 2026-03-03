@@ -1,4 +1,4 @@
-const { ChannelType } = require('discord.js');
+const { ChannelType, PermissionFlagsBits } = require('discord.js');
 
 const { getMatchesByWeek } = require('./googleSheets');
 const { slugifyTeamName } = require('../utils/slugify');
@@ -83,6 +83,101 @@ function makeUniqueNames(baseNames) {
   });
 }
 
+function normalizeRoleName(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '');
+}
+
+async function getStaffRoleIds(guild) {
+  if (!guild.roles.cache.size) {
+    await guild.roles.fetch();
+  }
+
+  const ids = new Set();
+  const explicitIds = [
+    String(process.env.ADMIN_ROLE_ID || '').trim(),
+    String(process.env.ADMIN_MIN_ROLE_ID || '').trim(),
+  ].filter(Boolean);
+  for (const id of explicitIds) {
+    if (guild.roles.cache.has(id)) {
+      ids.add(id);
+    }
+  }
+
+  const elevatedNames = new Set([
+    'mods',
+    'moderator',
+    'moderators',
+    'owner',
+    'admin',
+    'admins',
+    'commissioner',
+    'commissioners',
+    'commisioner',
+    'commisioners',
+    'ccstimeskeeper',
+  ]);
+
+  for (const role of guild.roles.cache.values()) {
+    if (elevatedNames.has(normalizeRoleName(role.name))) {
+      ids.add(role.id);
+    }
+  }
+
+  return [...ids];
+}
+
+async function buildChannelOverwrites(guild, teamA, teamB, botMemberId) {
+  const overwrites = [
+    {
+      id: guild.roles.everyone.id,
+      deny: [PermissionFlagsBits.ViewChannel],
+    },
+    {
+      id: botMemberId,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ReadMessageHistory,
+        PermissionFlagsBits.ManageChannels,
+        PermissionFlagsBits.ManageMessages,
+      ],
+    },
+  ];
+
+  const roleIds = new Set();
+  const [roleAId, roleBId] = await Promise.all([
+    getRoleIdByTeamName(guild, teamA),
+    getRoleIdByTeamName(guild, teamB),
+  ]);
+  if (roleAId) {
+    roleIds.add(roleAId);
+  }
+  if (roleBId) {
+    roleIds.add(roleBId);
+  }
+
+  const staffRoleIds = await getStaffRoleIds(guild);
+  for (const staffId of staffRoleIds) {
+    roleIds.add(staffId);
+  }
+
+  for (const roleId of roleIds) {
+    overwrites.push({
+      id: roleId,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ReadMessageHistory,
+      ],
+    });
+  }
+
+  return overwrites;
+}
+
 async function findCategory(guild, league) {
   const categoryName = CATEGORY_NAMES[league];
   if (!categoryName) {
@@ -152,6 +247,8 @@ async function buildRebuildPlan(guild, league, week) {
 
 async function applyRebuildPlan(guild, plan) {
   const { league, week, category, channelSpecs, existingTextChannels } = plan;
+  const me = await guild.members.fetchMe();
+  const botMemberId = me.id;
 
   let deletedCount = 0;
   for (const channel of existingTextChannels) {
@@ -163,12 +260,14 @@ async function applyRebuildPlan(guild, plan) {
   const createdNames = [];
   for (const spec of channelSpecs) {
     const topic = String(spec.matchId || '').trim();
+    const permissionOverwrites = await buildChannelOverwrites(guild, spec.teamA, spec.teamB, botMemberId);
 
     const created = await guild.channels.create({
       name: spec.name,
       type: ChannelType.GuildText,
       parent: category.id,
       topic,
+      permissionOverwrites,
     });
 
     createdNames.push(created.name);

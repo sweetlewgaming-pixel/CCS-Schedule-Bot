@@ -1,49 +1,33 @@
+const { slugifyTeamName } = require('./slugify');
+
 const TEAM_ROLE_MAP = {
   // Optional hard overrides:
   // 'San Diego Sonic Boom': '123456789012345678',
 };
 
-function normalizeName(value) {
-  return String(value || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function scoreRoleNameMatch(teamName, roleName) {
-  const teamNorm = normalizeName(teamName);
-  const roleNorm = normalizeName(roleName);
-  if (!teamNorm || !roleNorm) {
+function scoreRoleSlugMatch(teamSlug, roleSlug) {
+  if (!teamSlug || !roleSlug) {
     return 0;
   }
 
-  if (teamNorm === roleNorm) {
+  if (roleSlug === teamSlug) {
     return 1000;
   }
 
-  const teamCompact = teamNorm.replace(/\s/g, '');
-  const roleCompact = roleNorm.replace(/\s/g, '');
-  if (teamCompact === roleCompact) {
-    return 950;
+  // Accept common prefixed/suffixed role naming patterns only.
+  if (roleSlug.endsWith(`-${teamSlug}`)) {
+    return 960;
   }
 
-  // Handles short sheet names like "Anglers" matching role "Atlantis Anglers".
-  if (roleNorm.endsWith(` ${teamNorm}`) || roleNorm.startsWith(`${teamNorm} `) || roleNorm.includes(` ${teamNorm} `)) {
+  if (roleSlug.startsWith(`${teamSlug}-`)) {
+    return 930;
+  }
+
+  if (roleSlug.includes(`-${teamSlug}-`)) {
     return 900;
   }
 
-  const teamTokens = teamNorm.split(' ').filter(Boolean);
-  const roleTokens = new Set(roleNorm.split(' ').filter(Boolean));
-  const overlap = teamTokens.filter((token) => roleTokens.has(token)).length;
-  if (overlap === 0) {
-    return 0;
-  }
-
-  // Prefer matches with higher token overlap and fewer extra tokens.
-  const coverage = overlap / teamTokens.length;
-  const precision = overlap / roleTokens.size;
-  return Math.round(coverage * 500 + precision * 300);
+  return 0;
 }
 
 async function getRoleIdByTeamName(guild, teamName) {
@@ -65,19 +49,24 @@ async function getRoleIdByTeamName(guild, teamName) {
     return exact.id;
   }
 
+  const teamSlug = slugifyTeamName(teamName);
+  if (!teamSlug) {
+    return null;
+  }
+
   let bestRole = null;
   let bestScore = 0;
 
   for (const role of guild.roles.cache.values()) {
-    const score = scoreRoleNameMatch(teamName, role.name);
+    const roleSlug = slugifyTeamName(role.name);
+    const score = scoreRoleSlugMatch(teamSlug, roleSlug);
     if (score > bestScore) {
       bestScore = score;
       bestRole = role;
     }
   }
 
-  // Require a meaningful confidence to avoid false pings.
-  return bestScore >= 300 ? bestRole.id : null;
+  return bestScore > 0 ? bestRole.id : null;
 }
 
 module.exports = {
