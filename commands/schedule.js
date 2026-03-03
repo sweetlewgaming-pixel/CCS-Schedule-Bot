@@ -415,7 +415,7 @@ async function publishScheduleResult(interaction, league, week, time, date, matc
   const homeMention = await mentionForTeam(interaction.guild, homeTeam);
   const awayMention = await mentionForTeam(interaction.guild, awayTeam);
 
-  const output = `${homeMention} ${awayMention} ${formatScheduleTime(time)} ${formatScheduleDate(date)}`;
+  const output = `${awayMention} @ ${homeMention} ${formatScheduleTime(time)} ${formatScheduleDate(date)}`;
   const reminder =
     '🚨 **REPLAY UPLOAD REMINDER** 🚨\n' +
     '**After your match, upload your ballchasing group link using** `/upload`';
