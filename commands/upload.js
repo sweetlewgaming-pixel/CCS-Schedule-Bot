@@ -185,7 +185,15 @@ async function processUpload(interaction, league, match, link, groupData) {
 
   const replayChannel = await resolveReplaySubmissionChannel(interaction.guild, league);
   if (replayChannel) {
-    await replayChannel.send(`Ballchasing upload for ${match.awayTeam} at ${match.homeTeam}: ${link}`);
+    try {
+      await replayChannel.send(`Ballchasing upload for ${match.awayTeam} at ${match.homeTeam}: ${link}`);
+    } catch (error) {
+      await notifyStaffUploadFailure(
+        interaction.guild,
+        interaction.channel,
+        `⚠️ /upload saved the link for ${match.awayTeam} at ${match.homeTeam}, but could not post to #${replayChannel.name}. Error: ${describeUploadError(error)}`
+      );
+    }
   }
 
   await interaction.editReply('✅ Ballchasing group link uploaded successfully and posted.');
