@@ -110,7 +110,6 @@ async function getStaffRoleIds(guild) {
     'mods',
     'moderator',
     'moderators',
-    'owner',
     'admin',
     'admins',
     'commissioner',
