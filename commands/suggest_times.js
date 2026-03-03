@@ -906,6 +906,68 @@ function splitTranscriptIntoPseudoMessages(rawText, fallbackAuthorName) {
   return chunks;
 }
 
+function splitBotMentionScheduleBlocks(rawText) {
+  const lines = String(rawText || '').split(/\r?\n/);
+  const blocks = [];
+  let current = null;
+
+  const pushCurrent = () => {
+    if (!current) {
+      return;
+    }
+    const content = current.lines.join('\n').trim();
+    if (!content) {
+      return;
+    }
+    blocks.push({
+      authorKey: current.authorKey,
+      authorName: current.authorName,
+      content,
+    });
+  };
+
+  for (const rawLine of lines) {
+    const line = String(rawLine || '').trim();
+    if (!line) {
+      if (current) {
+        current.lines.push('');
+      }
+      continue;
+    }
+
+    const mentionMatch = line.match(/^<@!?(\d+)>\s*$/);
+    if (mentionMatch) {
+      pushCurrent();
+      const userId = mentionMatch[1];
+      current = {
+        authorKey: `id:${userId}`,
+        authorName: `<@${userId}>`,
+        lines: [],
+      };
+      continue;
+    }
+
+    const plainHandleMatch = line.match(/^@([A-Za-z0-9_.-]{2,64})\s*$/);
+    if (plainHandleMatch) {
+      pushCurrent();
+      const handle = plainHandleMatch[1];
+      current = {
+        authorKey: `handle:${handle.toLowerCase()}`,
+        authorName: `@${handle}`,
+        lines: [],
+      };
+      continue;
+    }
+
+    if (current) {
+      current.lines.push(rawLine);
+    }
+  }
+
+  pushCurrent();
+  return blocks;
+}
+
 async function resolveTimeskeeperMention(guild) {
   const explicitId = process.env.CCS_TIMESKEEPER_ROLE_ID;
   if (explicitId) {
@@ -964,7 +1026,21 @@ module.exports = {
       }
 
       const fallbackName = message.member?.displayName || message.author?.globalName || message.author?.username || 'Unknown';
-      const pseudoMessages = splitTranscriptIntoPseudoMessages(message.content || '', fallbackName);
+      let pseudoMessages = [];
+      if (message.author?.id === interaction.client.user.id) {
+        const botBlocks = splitBotMentionScheduleBlocks(message.content || '');
+        if (botBlocks.length) {
+          pseudoMessages = botBlocks;
+        }
+      }
+      if (!pseudoMessages.length) {
+        const transcriptPseudo = splitTranscriptIntoPseudoMessages(message.content || '', fallbackName);
+        pseudoMessages = transcriptPseudo.map((p) => ({
+          authorKey: `name:${(p.authorName || 'Unknown').toLowerCase()}`,
+          authorName: p.authorName || 'Unknown',
+          content: p.content,
+        }));
+      }
 
       for (const pseudo of pseudoMessages) {
         if (sharedIsScheduleTemplateMessage(pseudo.content)) {
@@ -975,12 +1051,15 @@ module.exports = {
         const parsedBlocks = parsedResult.schedules;
         const likelyLines = parsedResult.likelyScheduleLineCount;
         const handledLines = parsedResult.handledDayLines;
-        const name = pseudo.authorName || 'Unknown';
-        const currentStatus = parseStatusByUser.get(name) || {
+        const key = pseudo.authorKey || `name:${(pseudo.authorName || 'Unknown').toLowerCase()}`;
+        const label = pseudo.authorName || 'Unknown';
+        const currentStatus = parseStatusByUser.get(key) || {
+          label,
           hadLikelyScheduleLines: false,
           hadAnyParsedSchedule: false,
           hadPartialParse: false,
         };
+        currentStatus.label = label;
 
         if (likelyLines > 0) {
           currentStatus.hadLikelyScheduleLines = true;
@@ -991,7 +1070,7 @@ module.exports = {
         if (likelyLines > 0 && handledLines < likelyLines) {
           currentStatus.hadPartialParse = true;
         }
-        parseStatusByUser.set(name, currentStatus);
+        parseStatusByUser.set(key, currentStatus);
 
         if (!parsedBlocks.length) {
           continue;
@@ -1003,20 +1082,22 @@ module.exports = {
         }
 
         const isFull = isFullScheduleBlock(mergedBlock, handledLines);
-        const existing = latestScheduleByUser.get(name);
+        const existing = latestScheduleByUser.get(key);
         if (!existing) {
-          latestScheduleByUser.set(name, {
+          latestScheduleByUser.set(key, {
             schedule: mergedBlock,
             isFull,
+            label,
           });
           continue;
         }
 
         // Keep the latest full schedule over a newer conversational/partial update.
         if (!existing.isFull && isFull) {
-          latestScheduleByUser.set(name, {
+          latestScheduleByUser.set(key, {
             schedule: mergedBlock,
             isFull,
+            label,
           });
         }
       }
@@ -1030,12 +1111,12 @@ module.exports = {
 
     const partiallyParsedUsers = [...parseStatusByUser.entries()]
       .filter(([, status]) => status.hadPartialParse)
-      .map(([name]) => name)
+      .map(([, status]) => status.label || 'Unknown')
       .slice(0, 15);
 
     const confirmedUsers = [...parseStatusByUser.entries()]
       .filter(([, status]) => status.hadAnyParsedSchedule && status.hadLikelyScheduleLines && !status.hadPartialParse)
-      .map(([name]) => name)
+      .map(([, status]) => status.label || 'Unknown')
       .slice(0, 20);
 
     const confirmedNote = confirmedUsers.length

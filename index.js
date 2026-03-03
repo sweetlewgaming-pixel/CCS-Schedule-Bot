@@ -10,6 +10,7 @@ const rescheduleCommand = require('./commands/reschedule');
 const rebuildWeekCommand = require('./commands/rebuild_week');
 const requestCommand = require('./commands/request');
 const suggestTimesCommand = require('./commands/suggest_times');
+const suggestPlayersCommand = require('./commands/suggest_players');
 const uploadCommand = require('./commands/upload');
 const uploadNullCommand = require('./commands/upload_null');
 const availabilityCommand = require('./commands/availability');
@@ -34,6 +35,7 @@ client.commands.set(rescheduleCommand.data.name, rescheduleCommand);
 client.commands.set(rebuildWeekCommand.data.name, rebuildWeekCommand);
 client.commands.set(requestCommand.data.name, requestCommand);
 client.commands.set(suggestTimesCommand.data.name, suggestTimesCommand);
+client.commands.set(suggestPlayersCommand.data.name, suggestPlayersCommand);
 client.commands.set(uploadCommand.data.name, uploadCommand);
 client.commands.set(uploadNullCommand.data.name, uploadNullCommand);
 client.commands.set(availabilityCommand.data.name, availabilityCommand);
@@ -115,6 +117,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      if (suggestPlayersCommand.handleSelectMenu) {
+        await suggestPlayersCommand.handleSelectMenu(interaction);
+      }
+
+      if (interaction.deferred || interaction.replied) {
+        return;
+      }
+
       await scheduleCommand.handleSelectMenu(interaction);
       return;
     }
@@ -178,6 +188,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (rebuildWeekCommand.handleButtonInteraction) {
         await rebuildWeekCommand.handleButtonInteraction(interaction);
+      }
+
+      if (interaction.deferred || interaction.replied) {
+        return;
+      }
+
+      if (suggestPlayersCommand.handleButtonInteraction) {
+        await suggestPlayersCommand.handleButtonInteraction(interaction);
       }
       return;
     }

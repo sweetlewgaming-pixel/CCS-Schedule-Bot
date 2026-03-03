@@ -49,6 +49,7 @@ module.exports = {
       add('/reschedule', 'Update date/time for an already scheduled match (with confirmation).');
       add('/rebuild_week', 'Delete/recreate weekly matchup channels from RawSchedule.');
       add('/suggest', 'Parse posted availability and suggest best overlap times.');
+      add('/suggest_players', 'Pick up to 4 players per team and suggest overlap times from their posted schedules.');
       add('/upload_staff', 'Staff upload mode from any channel (select league/week/match if needed).');
       add('/availability_admin', 'Create or import availability on behalf of another user.');
     } else {
