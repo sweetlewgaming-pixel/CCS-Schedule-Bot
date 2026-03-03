@@ -1,0 +1,120 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      width: 100vw;
+      height: 100vh;
+      background: #1e1f22;
+      font-family: Impact, Haettenschweiler, 'Arial Narrow Bold', sans-serif;
+      color: #fff;
+    }
+
+    .card {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      border-radius: 16px;
+      border: 3px solid rgba(255, 255, 255, 0.08);
+      overflow: hidden;
+      background: #1f2024;
+      --mvp-accent: {{MVP_ACCENT_COLOR}};
+      --left-accent: {{MVP_LEFT_ACCENT_COLOR}};
+    }
+
+    .left-accent {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 15px;
+      background: var(--left-accent, transparent);
+      z-index: 5;
+    }
+
+    .league-mark {
+      position: absolute;
+      inset: -2%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0.12;
+      z-index: 1;
+    }
+
+    .league-mark img {
+      width: 124%;
+      height: 124%;
+      object-fit: cover;
+      filter: drop-shadow(0 0 16px rgba(0, 0, 0, 0.7));
+    }
+
+    .txt {
+      position: relative;
+      z-index: 3;
+      text-transform: uppercase;
+      font-style: italic;
+      letter-spacing: 0.02em;
+      text-align: center;
+      text-shadow:
+        -3px -3px 0 #111214,
+        3px -3px 0 #111214,
+        -3px 3px 0 #111214,
+        3px 3px 0 #111214,
+        0 5px 12px rgba(0, 0, 0, 0.88);
+    }
+
+    .content {
+      position: absolute;
+      inset: 0;
+      z-index: 3;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-evenly;
+      padding: 4.5% 7% 6.5%;
+    }
+
+    .mvp { font-size: 20.2vw; line-height: 0.8; }
+    .name { font-size: {{MVP_NAME_SIZE_VW}}vw; line-height: 0.84; color: var(--mvp-accent, #22b8a8); text-shadow: 0 0 0 transparent, 0 6px 12px rgba(0, 0, 0, 0.9); padding: 0 3%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .stats { font-size: 12vw; line-height: 0.84; color: #f2f2f2; }
+    .line1 { font-size: 6.2vw; line-height: 0.94; color: var(--mvp-accent, #22b8a8); text-shadow: 0 0 0 transparent, 0 6px 12px rgba(0, 0, 0, 0.9); }
+    .line2 { font-size: 6.2vw; line-height: 0.94; color: var(--mvp-accent, #22b8a8); text-shadow: 0 0 0 transparent, 0 6px 12px rgba(0, 0, 0, 0.9); }
+    .score { font-size: 7.2vw; line-height: 0.92; color: #f2f2f2; }
+    .score-num { color: var(--mvp-accent, #22b8a8); text-shadow: 0 0 0 transparent, 0 6px 12px rgba(0, 0, 0, 0.9); }
+    .website { font-size: 4.1vw; line-height: 1.02; color: #eff3fb; }
+    .website-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1.4vw;
+    }
+    .website-arrow {
+      font-size: 4.6vw;
+      line-height: 1;
+      color: #ef4444;
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="left-accent"></div>
+    <div class="league-mark">{{LEAGUE_LOGO}}</div>
+    <section class="content">
+      <div class="txt mvp">MVP</div>
+      <div class="txt name">{{MVP_NAME}}</div>
+      <div class="txt stats">Stats:</div>
+      <div class="txt line1">{{MVP_LINE1}}</div>
+      <div class="txt line2">{{MVP_LINE2}}</div>
+      <div class="txt score">Total Score: <span class="score-num">{{MVP_SCORE}}</span></div>
+      <div class="website-wrap">
+        <div class="txt website-arrow">▼</div>
+        <div class="txt website">More Info On The Website Below</div>
+        <div class="txt website-arrow">▼</div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

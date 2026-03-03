@@ -4,11 +4,16 @@
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "start:dev": "node --env-file=.env.dev index.js",
+    "start:prod": "node --env-file=.env.prod index.js",
+    "render:cards": "node src/render/run.js"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^0.1.95",
     "discord.js": "^14.16.3",
     "dotenv": "^16.4.5",
-    "googleapis": "^144.0.0"
+    "googleapis": "^144.0.0",
+    "playwright": "^1.58.2"
   }
 }
