@@ -569,10 +569,12 @@ async function buildTeamCandidates(interaction, roleA, roleB) {
         if (!block.userId) {
           continue;
         }
+
         const member = await getMember(block.userId, null);
         if (!member) {
           continue;
         }
+
         candidates.push({
           userId: block.userId,
           displayName: member.displayName || block.authorName || `<@${block.userId}>`,

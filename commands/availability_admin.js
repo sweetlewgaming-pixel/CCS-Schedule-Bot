@@ -10,7 +10,7 @@ const {
   TextInputStyle,
 } = require('discord.js');
 const { getLastAvailability, saveLastAvailability } = require('../services/userAvailabilityStore');
-const { isAdminAuthorized } = require('../utils/permissions');
+const { isAdminAuthorized, hasNamedRole } = require('../utils/permissions');
 const { DAY_KEYS: PARSER_DAY_KEYS, parseSchedulesFromText: sharedParseSchedulesFromText } = require('../utils/scheduleParser');
 
 const DAYS = [
@@ -542,7 +542,8 @@ module.exports = {
       return;
     }
 
-    if (!isAdminAuthorized(interaction)) {
+    const hasRoleOwnerAccess = hasNamedRole(interaction.member, 'roleowner');
+    if (!isAdminAuthorized(interaction) && !hasRoleOwnerAccess) {
       await interaction.reply({
         content: 'You need the required role level (Mods+) or CCS Times Keeper to use this command.',
         flags: MessageFlags.Ephemeral,

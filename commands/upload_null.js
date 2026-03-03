@@ -6,6 +6,9 @@ const {
   ButtonBuilder,
   ButtonStyle,
   StringSelectMenuBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
 } = require('discord.js');
 
 const { isAdminAuthorized } = require('../utils/permissions');
@@ -25,39 +28,35 @@ const {
   compareGroupTeamsToMatch,
 } = require('../services/ballchasing');
 
-const LEAGUE_SCHEDULING_CATEGORIES = {
-  CCS: 'CCS SCHEDULING',
-  CPL: 'CPL SCHEDULING',
-  CAS: 'CAS Scheduling',
-  CNL: 'CNL Scheduling',
-};
-
 const LEAGUES = ['CCS', 'CPL', 'CAS', 'CNL'];
 const WEEKS = Array.from({ length: 12 }, (_, i) => i + 1);
 const SELECT_PREFIX = 'uploadstaff';
 const OVERWRITE_PREFIX = 'uploadstaffovr';
+const FLOW_PREFIX = 'uploadstaffflow';
+const LINK_MODAL_PREFIX = 'uploadstafflink';
+const FINAL_PREFIX = 'uploadstafffinal';
 const PENDING_TTL_MS = 10 * 60 * 1000;
 const pendingSelections = new Map();
 const pendingOverwrites = new Map();
+const pendingFinals = new Map();
 
-function inferLeagueFromParentCategory(channel) {
-  const parentName = channel?.parent?.name;
-  if (!parentName) {
+function isBallchasingGroupUrl(value) {
+  return /^https?:\/\/(?:www\.)?ballchasing\.com\/group\/[A-Za-z0-9_-]+(?:[/?].*)?$/i.test(String(value || '').trim());
+}
+
+async function inferContextFromMatchChannel(channel) {
+  if (!channel || !String(channel.name || '').includes('-at-')) {
     return null;
   }
 
-  const normalizedParent = String(parentName).trim().toLowerCase();
-  for (const [league, categoryName] of Object.entries(LEAGUE_SCHEDULING_CATEGORIES)) {
-    if (String(categoryName).trim().toLowerCase() === normalizedParent) {
-      return league;
+  for (const league of LEAGUES) {
+    const match = await getMatchByChannel(league, channel).catch(() => null);
+    if (match) {
+      return { league, match };
     }
   }
 
   return null;
-}
-
-function isBallchasingGroupUrl(value) {
-  return /^https?:\/\/(?:www\.)?ballchasing\.com\/group\/[A-Za-z0-9_-]+(?:[/?].*)?$/i.test(String(value || '').trim());
 }
 
 function normalizeRoleName(value) {
@@ -117,7 +116,7 @@ async function notifyStaffTeamMismatch(guild, channel, match, teamCheck) {
   await notifyStaffUploadFailure(
     guild,
     channel,
-    `⚠️ Team mismatch on /upload_staff for ${match.awayTeam} at ${match.homeTeam}. Expected: ${match.homeTeam}, ${match.awayTeam}. Found in link: ${foundText}. Missing expected teams: ${missingText}. Upload continued.`
+    `⚠️ Team mismatch on /upload_admin for ${match.awayTeam} at ${match.homeTeam}. Expected: ${match.homeTeam}, ${match.awayTeam}. Found in link: ${foundText}. Missing expected teams: ${missingText}. Upload continued.`
   );
 }
 
@@ -135,6 +134,15 @@ function cleanupPendingOverwrites() {
   for (const [token, data] of pendingOverwrites.entries()) {
     if (data.expiresAt <= now) {
       pendingOverwrites.delete(token);
+    }
+  }
+}
+
+function cleanupPendingFinals() {
+  const now = Date.now();
+  for (const [token, data] of pendingFinals.entries()) {
+    if (data.expiresAt <= now) {
+      pendingFinals.delete(token);
     }
   }
 }
@@ -169,6 +177,21 @@ function getPendingOverwrite(token) {
   return pendingOverwrites.get(token) || null;
 }
 
+function createFinalToken(payload) {
+  cleanupPendingFinals();
+  const token = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  pendingFinals.set(token, {
+    ...payload,
+    expiresAt: Date.now() + PENDING_TTL_MS,
+  });
+  return token;
+}
+
+function getPendingFinal(token) {
+  cleanupPendingFinals();
+  return pendingFinals.get(token) || null;
+}
+
 function buildLeagueSelectRow(token) {
   const menu = new StringSelectMenuBuilder()
     .setCustomId(`${SELECT_PREFIX}:league:${token}`)
@@ -196,6 +219,48 @@ function buildMatchSelectRow(token, matches) {
       }))
     );
   return new ActionRowBuilder().addComponents(menu);
+}
+
+function buildPostMatchButtons(token) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${FLOW_PREFIX}:link:${token}`)
+      .setLabel('Enter Ballchasing Link')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId(`${FLOW_PREFIX}:cancel:${token}`)
+      .setLabel('Cancel')
+      .setStyle(ButtonStyle.Secondary)
+  );
+}
+
+function buildLinkModal(token) {
+  const modal = new ModalBuilder()
+    .setCustomId(`${LINK_MODAL_PREFIX}:${token}`)
+    .setTitle('Upload Staff Link');
+
+  const linkInput = new TextInputBuilder()
+    .setCustomId('link')
+    .setLabel('Ballchasing Group URL')
+    .setPlaceholder('https://ballchasing.com/group/xxxxxx')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true);
+
+  modal.addComponents(new ActionRowBuilder().addComponents(linkInput));
+  return modal;
+}
+
+function buildFinalConfirmButtons(token) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${FINAL_PREFIX}:confirm:${token}`)
+      .setLabel('Yes, submit upload')
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId(`${FINAL_PREFIX}:cancel:${token}`)
+      .setLabel('Cancel')
+      .setStyle(ButtonStyle.Secondary)
+  );
 }
 
 function parseSelectCustomId(customId) {
@@ -227,6 +292,30 @@ function parseOverwriteCustomId(customId) {
   return { action: parts[1], token: parts[2] };
 }
 
+function parseFlowCustomId(customId) {
+  const parts = String(customId || '').split(':');
+  if (parts.length !== 3 || parts[0] !== FLOW_PREFIX) {
+    return null;
+  }
+  return { action: parts[1], token: parts[2] };
+}
+
+function parseLinkModalCustomId(customId) {
+  const parts = String(customId || '').split(':');
+  if (parts.length !== 2 || parts[0] !== LINK_MODAL_PREFIX) {
+    return null;
+  }
+  return { token: parts[1] };
+}
+
+function parseFinalCustomId(customId) {
+  const parts = String(customId || '').split(':');
+  if (parts.length !== 3 || parts[0] !== FINAL_PREFIX) {
+    return null;
+  }
+  return { action: parts[1], token: parts[2] };
+}
+
 async function processUploadStaff(interaction, league, match, link, groupData) {
   try {
     await updateMatchBallchasingLink(league, match.matchId, link, { preventDuplicate: false });
@@ -236,14 +325,14 @@ async function processUploadStaff(interaction, league, match, link, groupData) {
       await notifyStaffUploadFailure(
         interaction.guild,
         interaction.channel,
-        `⚠️ /upload_staff failed for ${match.awayTeam} at ${match.homeTeam}: Sheets permission denied (403).`
+        `⚠️ /upload_admin failed for ${match.awayTeam} at ${match.homeTeam}: Sheets permission denied (403).`
       );
       return;
     }
     await notifyStaffUploadFailure(
       interaction.guild,
       interaction.channel,
-      `⚠️ /upload_staff failed for ${match.awayTeam} at ${match.homeTeam}. Error: ${error.message}`
+      `⚠️ /upload_admin failed for ${match.awayTeam} at ${match.homeTeam}. Error: ${error.message}`
     );
     throw error;
   }
@@ -286,14 +375,14 @@ async function executeUploadStaff(interaction, league, match, link) {
       await notifyStaffUploadFailure(
         interaction.guild,
         interaction.channel,
-        `⚠️ /upload_staff failed for ${match.awayTeam} at ${match.homeTeam}: Sheets permission denied (403).`
+        `⚠️ /upload_admin failed for ${match.awayTeam} at ${match.homeTeam}: Sheets permission denied (403).`
       );
       return;
     }
     await notifyStaffUploadFailure(
       interaction.guild,
       interaction.channel,
-      `⚠️ /upload_staff failed for ${match.awayTeam} at ${match.homeTeam}. Error: ${error.message}`
+      `⚠️ /upload_admin failed for ${match.awayTeam} at ${match.homeTeam}. Error: ${error.message}`
     );
     throw error;
   }
@@ -323,7 +412,7 @@ async function executeUploadStaff(interaction, league, match, link) {
     await notifyStaffUploadFailure(
       interaction.guild,
       interaction.channel,
-      `⚠️ /upload_staff failed for ${match.awayTeam} at ${match.homeTeam}: could not fetch group data. Error: ${error.message}`
+      `⚠️ /upload_admin failed for ${match.awayTeam} at ${match.homeTeam}: could not fetch group data. Error: ${error.message}`
     );
     return;
   }
@@ -338,9 +427,8 @@ async function executeUploadStaff(interaction, league, match, link) {
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('upload_staff')
-    .setDescription('Staff upload: update match link/stats from any channel')
-    .addStringOption((option) => option.setName('link').setDescription('Ballchasing group URL').setRequired(true))
+    .setName('upload_admin')
+    .setDescription('Staff upload: choose league/week/match, then submit link with confirmation')
     .setDMPermission(false),
 
   async handleChatInput(interaction) {
@@ -360,36 +448,39 @@ module.exports = {
       return;
     }
 
-    const link = interaction.options.getString('link', true).trim();
-    if (!isBallchasingGroupUrl(link)) {
+    const inferredContext = await inferContextFromMatchChannel(interaction.channel);
+    if (inferredContext?.league && inferredContext?.match) {
+      const token = createSelectionToken({
+        userId: interaction.user.id,
+        guildId: interaction.guild.id,
+        channelId: interaction.channel.id,
+        league: inferredContext.league,
+        week: String(inferredContext.match.week || ''),
+        match: inferredContext.match,
+      });
+
       await interaction.reply({
-        content: 'Only ballchasing **group** links are allowed. Example: https://ballchasing.com/group/xxxxxx',
+        content:
+          `Detected matchup context: ${inferredContext.league} ` +
+          `${inferredContext.match.homeTeam} vs ${inferredContext.match.awayTeam}.\n` +
+          'Click below to enter the Ballchasing link.',
+        components: [buildPostMatchButtons(token)],
         flags: MessageFlags.Ephemeral,
       });
       return;
-    }
-
-    const inferredLeague = inferLeagueFromParentCategory(interaction.channel);
-    if (inferredLeague && interaction.channel.name.includes('-at-')) {
-      const match = await getMatchByChannel(inferredLeague, interaction.channel);
-      if (match) {
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        await executeUploadStaff(interaction, inferredLeague, match, link);
-        return;
-      }
     }
 
     const token = createSelectionToken({
       userId: interaction.user.id,
       guildId: interaction.guild.id,
       channelId: interaction.channel.id,
-      link,
       league: null,
       week: null,
+      match: null,
     });
 
     await interaction.reply({
-      content: 'This is not a matchup channel. Select a league:',
+      content: 'Select a league:',
       components: [buildLeagueSelectRow(token)],
       flags: MessageFlags.Ephemeral,
     });
@@ -404,7 +495,7 @@ module.exports = {
     const pending = getPendingSelection(parsed.token);
     if (!pending) {
       await interaction.reply({
-        content: 'This upload selection has expired. Run /upload_staff again.',
+        content: 'This upload selection has expired. Run /upload_admin again.',
         flags: MessageFlags.Ephemeral,
       });
       return;
@@ -430,6 +521,7 @@ module.exports = {
     if (parsed.stage === 'league') {
       pending.league = interaction.values[0];
       pending.week = null;
+      pending.match = null;
       pending.expiresAt = Date.now() + PENDING_TTL_MS;
       pendingSelections.set(parsed.token, pending);
       await interaction.update({
@@ -444,7 +536,7 @@ module.exports = {
       const week = interaction.values[0];
       if (!league) {
         await interaction.update({
-          content: 'League selection missing. Run /upload_staff again.',
+          content: 'League selection missing. Run /upload_admin again.',
           components: [],
         });
         pendingSelections.delete(parsed.token);
@@ -462,6 +554,7 @@ module.exports = {
       }
 
       pending.week = week;
+      pending.match = null;
       pending.expiresAt = Date.now() + PENDING_TTL_MS;
       pendingSelections.set(parsed.token, pending);
       await interaction.update({
@@ -477,7 +570,7 @@ module.exports = {
       const matchId = interaction.values[0];
       if (!league || !week) {
         await interaction.update({
-          content: 'League/week selection missing. Run /upload_staff again.',
+          content: 'League/week selection missing. Run /upload_admin again.',
           components: [],
         });
         pendingSelections.delete(parsed.token);
@@ -488,23 +581,129 @@ module.exports = {
       const match = matches.find((m) => String(m.matchId) === String(matchId));
       if (!match) {
         await interaction.update({
-          content: 'Could not load that match. Run /upload_staff again.',
+          content: 'Could not load that match. Run /upload_admin again.',
           components: [],
         });
         pendingSelections.delete(parsed.token);
         return;
       }
 
+      pending.match = match;
+      pending.expiresAt = Date.now() + PENDING_TTL_MS;
+      pendingSelections.set(parsed.token, pending);
       await interaction.update({
-        content: `Processing upload for ${league} Week ${week}: ${match.homeTeam} vs ${match.awayTeam}...`,
-        components: [],
+        content: `Selected ${league} Week ${week}: ${match.homeTeam} vs ${match.awayTeam}.\nNow click below to enter the link.`,
+        components: [buildPostMatchButtons(parsed.token)],
       });
-      pendingSelections.delete(parsed.token);
-      await executeUploadStaff(interaction, league, match, pending.link);
+      return;
     }
   },
 
   async handleButtonInteraction(interaction) {
+    const flowParsed = parseFlowCustomId(interaction.customId);
+    if (flowParsed) {
+      const pending = getPendingSelection(flowParsed.token);
+      if (!pending) {
+        await interaction.reply({
+          content: 'This upload selection has expired. Run /upload_admin again.',
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      if (interaction.user.id !== pending.userId || interaction.guildId !== pending.guildId) {
+        await interaction.reply({
+          content: 'Only the admin who started this upload can continue it.',
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      if (!isAdminAuthorized(interaction)) {
+        pendingSelections.delete(flowParsed.token);
+        await interaction.reply({
+          content: 'You no longer have permission to use this command.',
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      if (flowParsed.action === 'cancel') {
+        pendingSelections.delete(flowParsed.token);
+        await interaction.update({
+          content: 'Upload cancelled.',
+          components: [],
+        });
+        return;
+      }
+
+      if (flowParsed.action !== 'link') {
+        return;
+      }
+
+      if (!pending.league || !pending.week || !pending.match) {
+        pendingSelections.delete(flowParsed.token);
+        await interaction.reply({
+          content: 'League/week/match selection is incomplete. Run /upload_admin again.',
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      await interaction.showModal(buildLinkModal(flowParsed.token));
+      return;
+    }
+
+    const finalParsed = parseFinalCustomId(interaction.customId);
+    if (finalParsed) {
+      const pending = getPendingFinal(finalParsed.token);
+      if (!pending) {
+        await interaction.reply({
+          content: 'This upload confirmation has expired. Run /upload_admin again.',
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      if (interaction.user.id !== pending.userId || interaction.guildId !== pending.guildId) {
+        await interaction.reply({
+          content: 'Only the admin who started this upload can confirm it.',
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      if (!isAdminAuthorized(interaction)) {
+        pendingFinals.delete(finalParsed.token);
+        await interaction.reply({
+          content: 'You no longer have permission to use this command.',
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      if (finalParsed.action === 'cancel') {
+        pendingFinals.delete(finalParsed.token);
+        await interaction.update({
+          content: 'Upload cancelled.',
+          components: [],
+        });
+        return;
+      }
+
+      if (finalParsed.action !== 'confirm') {
+        return;
+      }
+
+      await interaction.update({
+        content: `Processing upload for ${pending.league} Week ${pending.week}: ${pending.match.homeTeam} vs ${pending.match.awayTeam}...`,
+        components: [],
+      });
+      pendingFinals.delete(finalParsed.token);
+      await executeUploadStaff(interaction, pending.league, pending.match, pending.link);
+      return;
+    }
+
     const parsed = parseOverwriteCustomId(interaction.customId);
     if (!parsed) {
       return;
@@ -513,7 +712,7 @@ module.exports = {
     const pending = getPendingOverwrite(parsed.token);
     if (!pending) {
       await interaction.reply({
-        content: 'This overwrite confirmation has expired. Run /upload_staff again.',
+        content: 'This overwrite confirmation has expired. Run /upload_admin again.',
         flags: MessageFlags.Ephemeral,
       });
       return;
@@ -564,7 +763,7 @@ module.exports = {
       await notifyStaffUploadFailure(
         interaction.guild,
         interaction.channel,
-        `⚠️ /upload_staff failed for ${pending.match.awayTeam} at ${pending.match.homeTeam}: could not fetch group data. Error: ${error.message}`
+        `⚠️ /upload_admin failed for ${pending.match.awayTeam} at ${pending.match.homeTeam}: could not fetch group data. Error: ${error.message}`
       );
       return;
     }
@@ -575,5 +774,79 @@ module.exports = {
     }
 
     await processUploadStaff(interaction, pending.league, pending.match, pending.link, group.data);
+  },
+
+  async handleModalSubmit(interaction) {
+    const parsed = parseLinkModalCustomId(interaction.customId);
+    if (!parsed) {
+      return;
+    }
+
+    const pending = getPendingSelection(parsed.token);
+    if (!pending) {
+      await interaction.reply({
+        content: 'This upload selection has expired. Run /upload_admin again.',
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    if (interaction.user.id !== pending.userId || interaction.guildId !== pending.guildId) {
+      await interaction.reply({
+        content: 'Only the admin who started this upload can continue it.',
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    if (!isAdminAuthorized(interaction)) {
+      pendingSelections.delete(parsed.token);
+      await interaction.reply({
+        content: 'You no longer have permission to use this command.',
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    if (!pending.league || !pending.week || !pending.match) {
+      pendingSelections.delete(parsed.token);
+      await interaction.reply({
+        content: 'League/week/match selection is incomplete. Run /upload_admin again.',
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    const link = interaction.fields.getTextInputValue('link').trim();
+    if (!isBallchasingGroupUrl(link)) {
+      await interaction.reply({
+        content: 'Only ballchasing **group** links are allowed. Example: https://ballchasing.com/group/xxxxxx',
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    pendingSelections.delete(parsed.token);
+    const finalToken = createFinalToken({
+      userId: pending.userId,
+      guildId: pending.guildId,
+      channelId: pending.channelId,
+      league: pending.league,
+      week: pending.week,
+      match: pending.match,
+      link,
+    });
+
+    await interaction.reply({
+      content:
+        `Confirm upload:\n` +
+        `League: ${pending.league}\n` +
+        `Week: ${pending.week}\n` +
+        `Match: ${pending.match.homeTeam} vs ${pending.match.awayTeam}\n` +
+        `Link: ${link}\n\n` +
+        'Are you sure you want to submit this upload?',
+      components: [buildFinalConfirmButtons(finalToken)],
+      flags: MessageFlags.Ephemeral,
+    });
   },
 };

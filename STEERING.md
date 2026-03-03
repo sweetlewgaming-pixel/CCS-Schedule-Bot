@@ -28,7 +28,7 @@ Keep behavior predictable and staff-safe. Prefer explicit confirmations for dest
 
 ## Command Access Intent
 - Staff/Admin:
-  - `/schedule`, `/reschedule`, `/rebuild_week`, `/suggest`, `/upload_staff`, `/availability_admin`
+  - `/schedule`, `/reschedule`, `/rebuild_week`, `/suggest`, `/upload_admin`, `/availability_admin`
 - Team members (+ staff):
   - `/upload` (match channel context)
 - Everyone (where allowed by channel context):
@@ -59,7 +59,7 @@ Keep behavior predictable and staff-safe. Prefer explicit confirmations for dest
 - `/upload`:
   - Accept group links only
   - Respect duplicate protection unless explicitly overridden in staff flow
-- `/upload_staff`:
+- `/upload_admin`:
   - Allow overwrite with explicit confirm/cancel step
 - Stats import behavior is append-based unless replacement logic is intentionally added.
 - On import mismatch/failure, alert staff roles clearly in-channel.
