@@ -51,6 +51,26 @@ function isBallchasingGroupUrl(value) {
   return /^https?:\/\/(?:www\.)?ballchasing\.com\/group\/[A-Za-z0-9_-]+(?:[/?].*)?$/i.test(String(value || '').trim());
 }
 
+function describeUploadError(error) {
+  const status = Number(error?.code || error?.status || error?.response?.status || 0);
+  const message = String(error?.message || '').toLowerCase();
+
+  if (status === 403) {
+    return 'Google Sheets permission denied (403). Check that the bot service account has Editor access to this league sheet.';
+  }
+
+  if (
+    status === 429 ||
+    message.includes('quota exceeded') ||
+    message.includes('read requests per minute') ||
+    message.includes('rate limit')
+  ) {
+    return 'Google Sheets read quota is temporarily exceeded. Wait 1-2 minutes and run /upload again.';
+  }
+
+  return error?.message || 'Unknown error';
+}
+
 async function resolveReplaySubmissionChannel(guild, league) {
   if (!guild) {
     return null;
@@ -227,7 +247,21 @@ module.exports = {
       return;
     }
 
-    const match = await getMatchByChannel(league, interaction.channel);
+    let match;
+    try {
+      match = await getMatchByChannel(league, interaction.channel);
+    } catch (error) {
+      await interaction.reply({
+        content: `Could not load match data from Google Sheets.\nError: ${describeUploadError(error)}`,
+        flags: MessageFlags.Ephemeral,
+      });
+      await notifyStaffUploadFailure(
+        interaction.guild,
+        interaction.channel,
+        `⚠️ /upload failed while loading match for channel ${interaction.channel?.name || 'unknown'} (${league}). Error: ${describeUploadError(error)}`
+      );
+      return;
+    }
     if (!match) {
       await interaction.reply({
         content: 'Could not determine match from this channel name.',
@@ -236,7 +270,21 @@ module.exports = {
       return;
     }
 
-    const allowed = isAdminAuthorized(interaction) || (await isTeamMember(interaction, match.homeTeam, match.awayTeam));
+    let allowed = false;
+    try {
+      allowed = isAdminAuthorized(interaction) || (await isTeamMember(interaction, match.homeTeam, match.awayTeam));
+    } catch (error) {
+      await interaction.reply({
+        content: `Could not verify your team-role access.\nError: ${describeUploadError(error)}`,
+        flags: MessageFlags.Ephemeral,
+      });
+      await notifyStaffUploadFailure(
+        interaction.guild,
+        interaction.channel,
+        `⚠️ /upload failed while checking permissions for ${match.awayTeam} at ${match.homeTeam}. Error: ${describeUploadError(error)}`
+      );
+      return;
+    }
     if (!allowed) {
       await interaction.reply({
         content: 'Only players on the two teams (or elevated staff roles) can use this command.',
