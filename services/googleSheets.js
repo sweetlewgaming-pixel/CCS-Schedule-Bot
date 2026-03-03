@@ -9,6 +9,7 @@ const SPREADSHEET_IDS = {
 };
 
 const SHEET_NAME = 'RawSchedule';
+const RAW_STANDINGS_SHEET_NAME = process.env.RAW_STANDINGS_SHEET_NAME || 'RawStandings';
 const STATS_SHEET_NAME = process.env.STATS_SHEET_NAME || 'PlayerInput';
 const TEAM_STATS_SHEET_NAME = process.env.TEAM_STATS_SHEET_NAME || 'TeamInput';
 const STATS_SPREADSHEET_IDS = {
@@ -17,6 +18,51 @@ const STATS_SPREADSHEET_IDS = {
   CAS: process.env.CAS_STATS_SHEET_ID || SPREADSHEET_IDS.CAS,
   CNL: process.env.CNL_STATS_SHEET_ID || SPREADSHEET_IDS.CNL,
 };
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isGoogleQuotaError(error) {
+  const status = Number(error?.code || error?.status || error?.response?.status || 0);
+  if (status === 429) {
+    return true;
+  }
+
+  const rawReason = error?.errors?.[0]?.reason || error?.response?.data?.error?.status || '';
+  const reason = String(rawReason || '').toLowerCase();
+  if (reason.includes('ratelimit') || reason.includes('quota') || reason.includes('resource_exhausted')) {
+    return true;
+  }
+
+  const message = String(error?.message || '').toLowerCase();
+  return message.includes('quota exceeded') || message.includes('read requests per minute') || message.includes('rate limit');
+}
+
+async function sheetsValuesGetWithRetry(sheets, params, options = {}) {
+  const maxAttempts = Number(options.maxAttempts || 6);
+  const initialDelayMs = Number(options.initialDelayMs || 1500);
+
+  let attempt = 0;
+  let delay = initialDelayMs;
+  while (attempt < maxAttempts) {
+    attempt += 1;
+    try {
+      return await sheets.spreadsheets.values.get(params);
+    } catch (error) {
+      const retryable = isGoogleQuotaError(error);
+      if (!retryable || attempt >= maxAttempts) {
+        throw error;
+      }
+      // Add a small jitter to avoid synchronized retry bursts.
+      const jitter = Math.floor(Math.random() * 400);
+      await sleep(delay + jitter);
+      delay = Math.min(delay * 2, 30000);
+    }
+  }
+
+  throw new Error('Sheets read failed after retries.');
+}
 
 function getSheetsClient() {
   const auth = new google.auth.JWT({
@@ -33,6 +79,28 @@ function normalizeHeader(header) {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, '_');
+}
+
+function normalizeTeamKey(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^\w\s-]/g, '')
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function teamsLikelyMatch(a, b) {
+  const left = normalizeTeamKey(a);
+  const right = normalizeTeamKey(b);
+  if (!left || !right) {
+    return false;
+  }
+  if (left === right) {
+    return true;
+  }
+  return left.includes(right) || right.includes(left);
 }
 
 function colNumberToLetter(colNumber) {
@@ -80,7 +148,7 @@ async function getRawScheduleRows(league) {
   }
 
   const sheets = getSheetsClient();
-  const response = await sheets.spreadsheets.values.get({
+  const response = await sheetsValuesGetWithRetry(sheets, {
     spreadsheetId,
     range: `${SHEET_NAME}!A1:Z`,
   });
@@ -156,6 +224,324 @@ async function getMatchesByWeek(league, week) {
     .filter((match) => match.matchId && match.homeTeam && match.awayTeam);
 }
 
+function tryParseNumber(value) {
+  const n = Number(String(value ?? '').trim());
+  return Number.isFinite(n) ? n : null;
+}
+
+function normalizeRowObject(headers, row, rowIndex) {
+  const obj = { _rowIndex: rowIndex };
+  headers.forEach((header, idx) => {
+    obj[header] = row[idx] ?? '';
+  });
+  return obj;
+}
+
+function isLikelyHeaderRepeat(rowObj, requiredHeader) {
+  const value = String(rowObj?.[requiredHeader] || '').trim().toLowerCase();
+  return value === requiredHeader;
+}
+
+async function getOverallStandingsRecords(league) {
+  const spreadsheetId = SPREADSHEET_IDS[league];
+  if (!spreadsheetId) {
+    throw new Error(`Unsupported league: ${league}`);
+  }
+
+  const sheets = getSheetsClient();
+  const response = await sheetsValuesGetWithRetry(sheets, {
+    spreadsheetId,
+    range: `${RAW_STANDINGS_SHEET_NAME}!A16:Z27`,
+  });
+
+  const values = response.data.values || [];
+  if (!values.length) {
+    return new Map();
+  }
+
+  const records = new Map();
+  for (const row of values) {
+    if (!Array.isArray(row) || row.every((cell) => String(cell || '').trim() === '')) {
+      continue;
+    }
+
+    // RawStandings overall block rows 16-27 use stable columns:
+    // A=team, E=wins, F=losses.
+    const teamName = String(row[0] || row[1] || '').trim();
+    let wins = tryParseNumber(row[4]);
+    let losses = tryParseNumber(row[5]);
+
+    // Fallback for any variant layout.
+    if (wins === null || losses === null) {
+      const nums = row.map((cell) => tryParseNumber(cell)).filter((n) => n !== null);
+      if (nums.length >= 3) {
+        // Usually [matches, wins, losses, ...].
+        wins = wins ?? nums[1];
+        losses = losses ?? nums[2];
+      } else if (nums.length >= 2) {
+        wins = wins ?? nums[0];
+        losses = losses ?? nums[1];
+      }
+    }
+
+    if (!teamName || wins === null || losses === null) {
+      continue;
+    }
+
+    records.set(normalizeTeamKey(teamName), {
+      teamName,
+      wins,
+      losses,
+    });
+  }
+
+  return records;
+}
+
+async function getInputStatsRows(league) {
+  const spreadsheetId = getStatsSpreadsheetId(league);
+  if (!spreadsheetId) {
+    throw new Error(`Stats spreadsheet is not configured for league ${league}.`);
+  }
+
+  const sheets = getSheetsClient();
+  const [playerRes, teamRes] = await Promise.all([
+    sheetsValuesGetWithRetry(sheets, {
+      spreadsheetId,
+      range: `${STATS_SHEET_NAME}!A1:ZZ`,
+    }),
+    sheetsValuesGetWithRetry(sheets, {
+      spreadsheetId,
+      range: `${TEAM_STATS_SHEET_NAME}!A1:ZZ`,
+    }),
+  ]);
+
+  const playerValues = playerRes.data.values || [];
+  const teamValues = teamRes.data.values || [];
+
+  const playerHeaders = (playerValues[0] || []).map(normalizeHeader);
+  const teamHeaders = (teamValues[0] || []).map(normalizeHeader);
+
+  const playerRows = playerValues
+    .slice(1)
+    .map((row, i) => normalizeRowObject(playerHeaders, row, i + 2))
+    .filter((row) => !isLikelyHeaderRepeat(row, 'player_name'));
+
+  const teamRows = teamValues
+    .slice(1)
+    .map((row, i) => normalizeRowObject(teamHeaders, row, i + 2))
+    .filter((row) => !isLikelyHeaderRepeat(row, 'team_name'));
+
+  return {
+    playerRows,
+    teamRows,
+  };
+}
+
+function dedupeLatestByKey(rows, keyFn) {
+  const out = [];
+  const seen = new Set();
+  const ordered = [...rows].sort((a, b) => Number(b._rowIndex || 0) - Number(a._rowIndex || 0));
+  for (const row of ordered) {
+    const key = keyFn(row);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
+}
+
+function extractMatchStatsFromInputRows(inputRows, match) {
+  const weekKey = cleanWeekValue(match?.week || '');
+  const homeTeam = String(match?.homeTeam || '').trim();
+  const awayTeam = String(match?.awayTeam || '').trim();
+  const playerRows = Array.isArray(inputRows?.playerRows) ? inputRows.playerRows : [];
+  const teamRows = Array.isArray(inputRows?.teamRows) ? inputRows.teamRows : [];
+
+  const scopedPlayerRows = playerRows.filter((row) => {
+    const teamName = String(row.team_name || '').trim();
+    if (!teamName) {
+      return false;
+    }
+    const sameWeek = cleanWeekValue(row.week) === weekKey;
+    if (!sameWeek) {
+      return false;
+    }
+    return teamsLikelyMatch(teamName, homeTeam) || teamsLikelyMatch(teamName, awayTeam);
+  });
+
+  const latestPlayerRows = dedupeLatestByKey(scopedPlayerRows, (row) => {
+    return `${normalizeTeamKey(row.team_name)}|${String(row.player_name || '').trim().toLowerCase()}`;
+  });
+
+  const teamAggregate = new Map();
+  for (const row of latestPlayerRows) {
+    const key = normalizeTeamKey(row.team_name);
+    if (!key) {
+      continue;
+    }
+    if (!teamAggregate.has(key)) {
+      teamAggregate.set(key, {
+        teamName: String(row.team_name || '').trim(),
+        wins: 0,
+        players: [],
+      });
+    }
+    const agg = teamAggregate.get(key);
+    agg.players.push(row);
+    const wins = Number(row.wins || 0);
+    if (Number.isFinite(wins) && wins > agg.wins) {
+      agg.wins = wins;
+    }
+  }
+
+  const findTeamAgg = (teamName) => {
+    for (const [key, value] of teamAggregate.entries()) {
+      if (teamsLikelyMatch(key, teamName) || teamsLikelyMatch(value.teamName, teamName)) {
+        return value;
+      }
+    }
+    return null;
+  };
+
+  const homeAgg = findTeamAgg(homeTeam);
+  const awayAgg = findTeamAgg(awayTeam);
+
+  let homeWins = Number(homeAgg?.wins || 0);
+  let awayWins = Number(awayAgg?.wins || 0);
+
+  // TeamInput override when a usable row exists and looks like per-series data.
+  const scopedTeamRows = teamRows.filter((row) => {
+    const teamName = String(row.team_name || '').trim();
+    if (!teamName) {
+      return false;
+    }
+    const hasWeek = String(row.week || '').trim() !== '';
+    if (hasWeek && cleanWeekValue(row.week) !== weekKey) {
+      return false;
+    }
+    return teamsLikelyMatch(teamName, homeTeam) || teamsLikelyMatch(teamName, awayTeam);
+  });
+  const latestTeamRows = dedupeLatestByKey(scopedTeamRows, (row) => normalizeTeamKey(row.team_name));
+  for (const row of latestTeamRows) {
+    const wins = Number(row.wins || 0);
+    const games = Number(row.games || 0);
+    if (!Number.isFinite(wins)) {
+      continue;
+    }
+    // Guardrail: ignore season cumulative rows (large games/wins), keep series-like rows only.
+    const looksLikeSeriesRow = (Number.isFinite(games) && games > 0 && games <= 7) && wins <= 7;
+    if (!looksLikeSeriesRow) {
+      continue;
+    }
+    if (teamsLikelyMatch(row.team_name, homeTeam)) {
+      homeWins = wins;
+    } else if (teamsLikelyMatch(row.team_name, awayTeam)) {
+      awayWins = wins;
+    }
+  }
+
+  const winningKey = homeWins > awayWins ? normalizeTeamKey(homeTeam) : normalizeTeamKey(awayTeam);
+  const winningAgg = [...teamAggregate.entries()].find(([key, value]) => {
+    return teamsLikelyMatch(key, winningKey) || teamsLikelyMatch(value.teamName, winningKey);
+  })?.[1] || null;
+
+  const mvpPool = (winningAgg?.players || []).length ? winningAgg.players : latestPlayerRows;
+  const mvp = [...mvpPool].sort((a, b) => Number(b.score || 0) - Number(a.score || 0))[0] || null;
+
+  if (!latestPlayerRows.length || !mvp) {
+    return null;
+  }
+
+  return {
+    source: 'input_sheets',
+    homeWins,
+    awayWins,
+    mvp: {
+      name: String(mvp.player_name || 'TBD').trim() || 'TBD',
+      teamName: String(mvp.team_name || '').trim(),
+      goals: Number(mvp.goals || 0) || 0,
+      assists: Number(mvp.assists || 0) || 0,
+      saves: Number(mvp.saves || 0) || 0,
+      shots: Number(mvp.shots || 0) || 0,
+      score: Number(mvp.score || 0) || 0,
+    },
+  };
+}
+
+async function getMatchesByWeekDetailed(league, week) {
+  const { rows } = await getRawScheduleRows(league);
+  const targetWeek = cleanWeekValue(week);
+
+  return rows
+    .filter(({ rowData }) => cleanWeekValue(rowData.week) === targetWeek)
+    .map(({ rowData, rowIndex }) => ({
+      matchId: String(rowData.match_id || '').trim(),
+      week: String(rowData.week || '').trim(),
+      homeTeam: String(rowData.home_team || '').trim(),
+      awayTeam: String(rowData.away_team || '').trim(),
+      date: String(rowData.date || '').trim(),
+      time: String(rowData.time || '').trim(),
+      ballchasingLink: getBallchasingValueFromRow(rowData),
+      websiteLink: getWebsiteValueFromRow(rowData),
+      homeRecord: String(rowData.home_record || rowData.home_team_record || '').trim(),
+      awayRecord: String(rowData.away_record || rowData.away_team_record || '').trim(),
+      rowIndex,
+    }))
+    .filter((match) => match.matchId && match.homeTeam && match.awayTeam);
+}
+
+function getBallchasingValueFromRow(rowData) {
+  return String(
+    rowData.ballchasing_link ||
+      rowData.ballchasing ||
+      rowData.ballchasing_url ||
+      rowData.replay_link ||
+      rowData.replay_url ||
+      rowData.ballchasing_group_id ||
+      ''
+  ).trim();
+}
+
+function getWebsiteValueFromRow(rowData) {
+  return String(
+    rowData.website_link ||
+      rowData.website_url ||
+      rowData.match_link ||
+      rowData.match_url ||
+      rowData.stats_link ||
+      rowData.stats_url ||
+      rowData.recaps_link ||
+      rowData.recap_link ||
+      ''
+  ).trim();
+}
+
+async function getMatchById(league, matchId) {
+  const { rows } = await getRawScheduleRows(league);
+  const target = rows.find(({ rowData }) => String(rowData.match_id || '').trim() === String(matchId || '').trim());
+  if (!target) {
+    return null;
+  }
+
+  const rowData = target.rowData;
+  return {
+    matchId: String(rowData.match_id || '').trim(),
+    week: String(rowData.week || '').trim(),
+    homeTeam: String(rowData.home_team || '').trim(),
+    awayTeam: String(rowData.away_team || '').trim(),
+    date: String(rowData.date || '').trim(),
+    time: String(rowData.time || '').trim(),
+    ballchasingLink: getBallchasingValueFromRow(rowData),
+    websiteLink: getWebsiteValueFromRow(rowData),
+    homeRecord: String(rowData.home_record || rowData.home_team_record || '').trim(),
+    awayRecord: String(rowData.away_record || rowData.away_team_record || '').trim(),
+    rowIndex: target.rowIndex,
+  };
+}
+
 async function getScheduledMatches(league) {
   const { rows } = await getRawScheduleRows(league);
 
@@ -168,13 +554,7 @@ async function getScheduledMatches(league) {
       date: String(rowData.date || '').trim(),
       time: String(rowData.time || '').trim(),
       ballchasingValue: String(
-        rowData.ballchasing_link ||
-          rowData.ballchasing ||
-          rowData.ballchasing_url ||
-          rowData.replay_link ||
-          rowData.replay_url ||
-          rowData.ballchasing_group_id ||
-          ''
+        getBallchasingValueFromRow(rowData)
       ).trim(),
       rowIndex,
     }))
@@ -454,7 +834,7 @@ async function appendStatsRows(league, sheetName, rowsToAppend, options = {}) {
   const includeSpacerRow = options.includeSpacerRow !== false;
 
   const sheets = getSheetsClient();
-  const headerResponse = await sheets.spreadsheets.values.get({
+  const headerResponse = await sheetsValuesGetWithRetry(sheets, {
     spreadsheetId,
     range: `${sheetName}!1:1`,
   });
@@ -573,7 +953,14 @@ async function updateMatchForfeitResult(league, matchId, winnerCode, options = {
 }
 
 module.exports = {
+  normalizeTeamKey,
+  teamsLikelyMatch,
   getMatchesByWeek,
+  getMatchesByWeekDetailed,
+  getMatchById,
+  getOverallStandingsRecords,
+  getInputStatsRows,
+  extractMatchStatsFromInputRows,
   getScheduledMatches,
   getMatchByChannel,
   updateMatchDateTime,

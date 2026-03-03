@@ -230,13 +230,22 @@ async function pollMatchReminders(client) {
   const now = getNowInEastern();
   let stateChanged = false;
 
+  const matchesByLeague = new Map();
+  for (const league of LEAGUES) {
+    let matches = [];
+    try {
+      matches = await getScheduledMatches(league);
+    } catch (error) {
+      console.error(`Reminder poll failed reading ${league} schedule:`, error.message);
+      matches = [];
+    }
+    matchesByLeague.set(league, matches);
+  }
+
   for (const guild of client.guilds.cache.values()) {
     for (const league of LEAGUES) {
-      let matches = [];
-      try {
-        matches = await getScheduledMatches(league);
-      } catch (error) {
-        console.error(`Reminder poll failed reading ${league} schedule:`, error.message);
+      const matches = matchesByLeague.get(league) || [];
+      if (!matches.length) {
         continue;
       }
 

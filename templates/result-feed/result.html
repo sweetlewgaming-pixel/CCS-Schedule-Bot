@@ -1,0 +1,180 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      width: 100vw;
+      height: 100vh;
+      background: #1e1f22;
+      font-family: Impact, Haettenschweiler, 'Arial Narrow Bold', sans-serif;
+      color: #fff;
+    }
+
+    .card {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      border-radius: 16px;
+      border: 3px solid rgba(255, 255, 255, 0.08);
+      background: #1f2024;
+      --winner-accent: {{RESULT_ACCENT_COLOR}};
+    }
+
+    .winner-accent {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 15px;
+      background: var(--winner-accent, transparent);
+      z-index: 5;
+    }
+
+    .league-mark {
+      position: absolute;
+      inset: -2%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0.13;
+      z-index: 1;
+    }
+
+    .league-mark img {
+      width: 122%;
+      height: 122%;
+      object-fit: cover;
+      filter: drop-shadow(0 0 16px rgba(0, 0, 0, 0.7));
+    }
+
+    .text-outline {
+      text-transform: uppercase;
+      font-style: italic;
+      letter-spacing: 0.04em;
+      text-shadow:
+        -3px -3px 0 #111214,
+        3px -3px 0 #111214,
+        -3px 3px 0 #111214,
+        3px 3px 0 #111214,
+        0 5px 12px rgba(0, 0, 0, 0.86);
+    }
+
+    .title {
+      position: absolute;
+      top: 3.6%;
+      left: 0;
+      right: 0;
+      z-index: 3;
+      text-align: center;
+      font-size: 4.5vw;
+      line-height: 0.82;
+      color: #ececec;
+    }
+
+    .content {
+      position: absolute;
+      inset: 0;
+      z-index: 3;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      padding: 11.2% 6.2% 15.8%;
+      gap: 2.4%;
+    }
+
+    .team {
+      position: relative;
+      height: 100%;
+      text-align: center;
+    }
+    .team-left { transform: translateX(-4%); }
+    .team-right { transform: translateX(4%); }
+
+    .team img {
+      position: absolute;
+      left: 50%;
+      top: -4%;
+      transform: translateX(-50%);
+      height: 87%;
+      width: auto;
+      max-width: 98%;
+      object-fit: contain;
+      filter: drop-shadow(0 8px 12px rgba(0, 0, 0, 0.7));
+    }
+
+    .team-name {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 6.2%;
+      font-size: 2.55vw;
+      line-height: 0.94;
+      padding: 0 4%;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .record {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: -1.8%;
+      font-size: 2.25vw;
+      color: #f0f0f0;
+      line-height: 0.95;
+      padding: 0 4%;
+      white-space: nowrap;
+    }
+
+    .score {
+      font-size: 13.8vw;
+      line-height: 0.92;
+      color: #e8edf5;
+      letter-spacing: 0.025em;
+      white-space: nowrap;
+    }
+
+    .week {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 4%;
+      text-align: center;
+      z-index: 3;
+      font-size: 6.4vw;
+      color: #f5f5f5;
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="winner-accent"></div>
+    <div class="league-mark">{{LEAGUE_LOGO}}</div>
+
+    <div class="title text-outline">{{LEAGUE}}</div>
+
+    <section class="content">
+      <div class="team team-left">
+        <img src="{{AWAY_LOGO}}" />
+        <div class="team-name text-outline">{{AWAY_TEAM}}</div>
+        <div class="record text-outline">{{AWAY_RECORD}}</div>
+      </div>
+
+      <div class="score text-outline">{{AWAY_WINS}}-{{HOME_WINS}}</div>
+
+      <div class="team team-right">
+        <img src="{{HOME_LOGO}}" />
+        <div class="team-name text-outline">{{HOME_TEAM}}</div>
+        <div class="record text-outline">{{HOME_RECORD}}</div>
+      </div>
+    </section>
+
+    <div class="week text-outline">Week {{WEEK}} Result</div>
+  </main>
+</body>
+</html>

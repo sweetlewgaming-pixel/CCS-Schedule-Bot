@@ -1,5 +1,9 @@
 const { Client, GatewayIntentBits, Collection, Events, REST, Routes, MessageFlags } = require('discord.js');
-require('dotenv').config();
+const dotenv = require('dotenv');
+
+if (!process.env.DISCORD_TOKEN || !process.env.CLIENT_ID || !process.env.GOOGLE_CLIENT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY) {
+  dotenv.config({ path: process.env.ENV_FILE || '.env' });
+}
 
 const scheduleCommand = require('./commands/schedule');
 const rescheduleCommand = require('./commands/reschedule');
@@ -11,6 +15,7 @@ const uploadNullCommand = require('./commands/upload_null');
 const availabilityCommand = require('./commands/availability');
 const availabilityAdminCommand = require('./commands/availability_admin');
 const helpCommand = require('./commands/help');
+const postResultCommand = require('./commands/post_result');
 const { startMatchReminderService } = require('./services/matchReminderService');
 
 const requiredEnv = ['DISCORD_TOKEN', 'CLIENT_ID', 'GOOGLE_CLIENT_EMAIL', 'GOOGLE_PRIVATE_KEY'];
@@ -34,6 +39,7 @@ client.commands.set(uploadNullCommand.data.name, uploadNullCommand);
 client.commands.set(availabilityCommand.data.name, availabilityCommand);
 client.commands.set(availabilityAdminCommand.data.name, availabilityAdminCommand);
 client.commands.set(helpCommand.data.name, helpCommand);
+client.commands.set(postResultCommand.data.name, postResultCommand);
 
 async function registerSlashCommands() {
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -58,7 +64,12 @@ client.once(Events.ClientReady, async (readyClient) => {
     console.error('Failed to register slash commands:', error);
   }
 
-  startMatchReminderService(readyClient);
+  const remindersDisabled = String(process.env.DISABLE_REMINDERS || '').trim().toLowerCase() === 'true';
+  if (!remindersDisabled) {
+    startMatchReminderService(readyClient);
+  } else {
+    console.log('Match reminder service disabled via DISABLE_REMINDERS=true');
+  }
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -67,6 +78,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const command = client.commands.get(interaction.commandName);
       if (command?.handleChatInput) {
         await command.handleChatInput(interaction);
+      }
+      return;
+    }
+
+    if (interaction.isAutocomplete()) {
+      const command = client.commands.get(interaction.commandName);
+      if (command?.handleAutocomplete) {
+        await command.handleAutocomplete(interaction);
       }
       return;
     }
