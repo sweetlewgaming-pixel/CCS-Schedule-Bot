@@ -5,6 +5,18 @@ const TEAM_ROLE_MAP = {
   // 'San Diego Sonic Boom': '123456789012345678',
 };
 
+const TEAM_NAME_ALIASES = {
+  // Common short forms from sheets -> exact Discord role labels.
+  thieves: 'Tokha Thieves',
+  'tohka thieves': 'Tokha Thieves',
+  marauders: 'Miami Marauders',
+  'sonic boom': 'San Diego Sonic Boom',
+  pirates: 'Palm Beach Pirates',
+  'black bears': 'Bad Axe Black Bears',
+  conquerors: 'Clearwater Conquerors',
+  'culebra conquerors': 'Clearwater Conquerors',
+};
+
 const KNOWN_FULL_TEAM_NAMES = [
   'Atlantis Anglers',
   'Frenchmen Bay Fishermen',
@@ -86,6 +98,9 @@ function canonicalizeTeamName(teamName) {
   const normalized = normalizeName(teamName);
   if (!normalized) {
     return '';
+  }
+  if (TEAM_NAME_ALIASES[normalized]) {
+    return TEAM_NAME_ALIASES[normalized];
   }
   if (FULL_NAME_BY_NORMALIZED.has(normalized)) {
     return FULL_NAME_BY_NORMALIZED.get(normalized);
