@@ -28,4 +28,72 @@ jobs:
           APP_DIR: ${{ secrets.ORACLE_APP_DIR }}
           APP_NAME: ccs-scheduler-bot
         run: |
-          ssh "${ORACLE_USER}@${ORACLE_HOST}" "set -e; cd '${APP_DIR}'; git fetch origin main; git reset --hard origin/main; npm ci; if pm2 describe '${APP_NAME}' >/dev/null 2>&1; then pm2 restart '${APP_NAME}'; else pm2 start index.js --name '${APP_NAME}'; fi; pm2 save; pm2 status"
+          ssh "${ORACLE_USER}@${ORACLE_HOST}" "bash -s -- '${APP_DIR}' '${APP_NAME}'" <<'EOF'
+          set -euo pipefail
+          APP_DIR="$1"
+          APP_NAME="$2"
+
+          cd "${APP_DIR}"
+
+          git fetch origin main
+          git reset --hard origin/main
+          npm ci
+
+          if [ ! -f .env ]; then
+            echo 'ERROR: .env not found in app directory on Oracle.'
+            exit 1
+          fi
+
+          required_keys=(
+            DISCORD_TOKEN
+            CLIENT_ID
+            GOOGLE_CLIENT_EMAIL
+            GOOGLE_PRIVATE_KEY
+            BALLCHASING_API_KEY
+            LOGO_DIR_CCS
+            LOGO_DIR_CPL
+            LOGO_DIR_CAS
+            LOGO_DIR_CNL
+            LEAGUE_LOGO_DIR
+            WEBSITE_MATCH_BASE_URL
+          )
+
+          missing=()
+          for key in "${required_keys[@]}"; do
+            if ! grep -q "^${key}=" .env; then
+              missing+=("${key}")
+            fi
+          done
+
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "ERROR: Missing required .env key(s): ${missing[*]}"
+            exit 1
+          fi
+
+          logo_keys=(LOGO_DIR_CCS LOGO_DIR_CPL LOGO_DIR_CAS LOGO_DIR_CNL LEAGUE_LOGO_DIR)
+          for key in "${logo_keys[@]}"; do
+            raw_line="$(grep "^${key}=" .env | tail -n 1 || true)"
+            value="${raw_line#*=}"
+            value="${value%\"}"
+            value="${value#\"}"
+
+            if echo "${value}" | grep -Eq '^[A-Za-z]:\\'; then
+              echo "ERROR: ${key} appears to be a Windows path (${value}). Use Linux paths on Oracle."
+              exit 1
+            fi
+
+            if [ ! -d "${value}" ]; then
+              echo "ERROR: ${key} directory does not exist: ${value}"
+              exit 1
+            fi
+          done
+
+          if pm2 describe "${APP_NAME}" >/dev/null 2>&1; then
+            pm2 restart "${APP_NAME}" --update-env
+          else
+            pm2 start index.js --name "${APP_NAME}"
+          fi
+
+          pm2 save
+          pm2 status
+          EOF
