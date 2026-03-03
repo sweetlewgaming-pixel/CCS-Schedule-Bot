@@ -4,7 +4,7 @@ const {
 } = require('discord.js');
 
 const { isAdminAuthorized } = require('../utils/permissions');
-const { slugifyTeamName } = require('../utils/slugify');
+const { getRoleIdByTeamName } = require('../utils/teamRoles');
 
 function cleanMatchupChannelName(name) {
   return String(name || '').replace(/✅+$/u, '').replace(/confirmed$/i, '').trim();
@@ -27,39 +27,6 @@ function parseMatchupSlugsFromChannel(channelName) {
     leftSlug: left,
     rightSlug: right,
   };
-}
-
-async function resolveRoleBySlug(guild, teamSlug) {
-  if (!guild || !teamSlug) {
-    return null;
-  }
-
-  if (!guild.roles.cache.size) {
-    await guild.roles.fetch();
-  }
-
-  const targetSlug = slugifyTeamName(teamSlug);
-  let bestRole = null;
-  let bestScore = 0;
-
-  for (const role of guild.roles.cache.values()) {
-    const roleSlug = slugifyTeamName(role.name);
-    let score = 0;
-    if (roleSlug === targetSlug) {
-      score = 1000;
-    } else if (roleSlug.endsWith(`-${targetSlug}`) || roleSlug.startsWith(`${targetSlug}-`)) {
-      score = 900;
-    } else if (roleSlug.includes(targetSlug)) {
-      score = 600;
-    }
-
-    if (score > bestScore) {
-      bestScore = score;
-      bestRole = role;
-    }
-  }
-
-  return bestScore >= 600 ? bestRole : null;
 }
 
 module.exports = {
@@ -101,11 +68,11 @@ module.exports = {
     const day = interaction.options.getString('day', true).trim();
     const time = interaction.options.getString('time', true).trim();
 
-    const roleA = await resolveRoleBySlug(interaction.guild, slugs.leftSlug);
-    const roleB = await resolveRoleBySlug(interaction.guild, slugs.rightSlug);
+    const roleAId = await getRoleIdByTeamName(interaction.guild, slugs.leftSlug);
+    const roleBId = await getRoleIdByTeamName(interaction.guild, slugs.rightSlug);
 
-    const mentionA = roleA ? `<@&${roleA.id}>` : `@${slugs.leftSlug}`;
-    const mentionB = roleB ? `<@&${roleB.id}>` : `@${slugs.rightSlug}`;
+    const mentionA = roleAId ? `<@&${roleAId}>` : `@${slugs.leftSlug}`;
+    const mentionB = roleBId ? `<@&${roleBId}>` : `@${slugs.rightSlug}`;
 
     const lines = [
       `${mentionA} ${mentionB}`,
