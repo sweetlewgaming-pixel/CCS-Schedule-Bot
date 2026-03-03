@@ -414,6 +414,7 @@ async function publishScheduleResult(interaction, league, week, time, date, matc
   const { homeTeam, awayTeam } = match;
   const homeMention = await mentionForTeam(interaction.guild, homeTeam);
   const awayMention = await mentionForTeam(interaction.guild, awayTeam);
+  const scheduledWhen = `${formatScheduleTime(time)} ${formatScheduleDate(date)}`.toUpperCase();
 
   const output = `${awayMention} @ ${homeMention} ${formatScheduleTime(time)} ${formatScheduleDate(date)}`;
   const reminder =
@@ -430,14 +431,14 @@ async function publishScheduleResult(interaction, league, week, time, date, matc
   if (matchupChannel) {
     try {
       await markChannelAsConfirmed(matchupChannel);
-      await matchupChannel.send(`✅ **Match scheduled.**\n\n${reminder}`);
+      await matchupChannel.send(`✅ **Match scheduled.**\n**SCHEDULED FOR: ${scheduledWhen}**\n\n${reminder}`);
     } catch (error) {
       console.error('Failed to mark matchup channel as confirmed:', error);
     }
   } else if (interaction.channel) {
     try {
       await markChannelAsConfirmed(interaction.channel);
-      await interaction.channel.send(`✅ **Match scheduled.**\n\n${reminder}`);
+      await interaction.channel.send(`✅ **Match scheduled.**\n**SCHEDULED FOR: ${scheduledWhen}**\n\n${reminder}`);
     } catch (error) {
       console.error('Failed to mark channel as confirmed:', error);
     }
@@ -911,4 +912,3 @@ module.exports = {
     }
   },
 };
-
