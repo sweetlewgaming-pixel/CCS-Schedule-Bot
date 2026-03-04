@@ -153,6 +153,30 @@ async function mentionForTeam(guild, teamName) {
   };
 }
 
+async function getUploadCommandMention(guild) {
+  try {
+    if (guild?.commands?.fetch) {
+      const guildCommands = await guild.commands.fetch();
+      const guildCommand = guildCommands.find((command) => command.name === 'upload');
+      if (guildCommand) {
+        return `</upload:${guildCommand.id}>`;
+      }
+    }
+
+    if (guild?.client?.application?.commands?.fetch) {
+      const globalCommands = await guild.client.application.commands.fetch();
+      const globalCommand = globalCommands.find((command) => command.name === 'upload');
+      if (globalCommand) {
+        return `</upload:${globalCommand.id}>`;
+      }
+    }
+  } catch (_) {
+    // Fall through to plain command text.
+  }
+
+  return '`/upload`';
+}
+
 async function findMatchChannelByMatchId(guild, league, matchId) {
   await guild.channels.fetch();
 
