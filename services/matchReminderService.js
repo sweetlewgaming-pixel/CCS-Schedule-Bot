@@ -199,14 +199,16 @@ async function findMatchChannelByMatchId(guild, league, matchId) {
 function buildMatchupChannelCandidates(homeTeam, awayTeam) {
   const awayAtHome = `${slugifyTeamName(awayTeam)}-at-${slugifyTeamName(homeTeam)}`;
   const homeAtAway = `${slugifyTeamName(homeTeam)}-at-${slugifyTeamName(awayTeam)}`;
-  return new Set([
-    awayAtHome,
-    `${awayAtHome}✅`,
-    `${awayAtHome}confirmed`,
-    homeAtAway,
-    `${homeAtAway}✅`,
-    `${homeAtAway}confirmed`,
-  ]);
+  return new Set([awayAtHome, homeAtAway]);
+}
+
+function normalizeMatchupChannelName(name) {
+  return String(name || '')
+    .trim()
+    .replace(/[\u2705]+$/u, '')
+    .replace(/âœ…+$/u, '')
+    .replace(/confirmed$/i, '')
+    .trim();
 }
 
 async function findMatchChannelByTeams(guild, league, homeTeam, awayTeam) {
@@ -223,7 +225,8 @@ async function findMatchChannelByTeams(guild, league, homeTeam, awayTeam) {
         return false;
       }
       const parentName = String(channel.parent?.name || '').trim().toLowerCase();
-      return parentName === categoryName && candidates.has(String(channel.name || '').trim());
+      const normalizedChannelName = normalizeMatchupChannelName(channel.name);
+      return parentName === categoryName && candidates.has(normalizedChannelName);
     }) || null
   );
 }
