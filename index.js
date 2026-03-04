@@ -225,6 +225,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      if (requestCommand.handleModalSubmit) {
+        await requestCommand.handleModalSubmit(interaction);
+      }
+
+      if (interaction.deferred || interaction.replied) {
+        return;
+      }
+
       await scheduleCommand.handleModalSubmit(interaction);
 
       if (interaction.deferred || interaction.replied) {

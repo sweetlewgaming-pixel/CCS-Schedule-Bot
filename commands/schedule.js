@@ -515,7 +515,19 @@ async function appendForfeitTeamStats(league, match, winnerCode) {
   return appendTeamInputRows(league, rows);
 }
 
+async function scheduleMatchById(interaction, { league, week, matchId, date, time, preventDuplicate = true }) {
+  const updateResult = await updateMatchDateTime(league, matchId, date, time, { preventDuplicate });
+  if (updateResult.duplicate) {
+    return updateResult;
+  }
+
+  await publishScheduleResult(interaction, league, week, time, date, updateResult.match);
+  return updateResult;
+}
+
 module.exports = {
+  inferLeagueFromParentCategory,
+  scheduleMatchById,
   data: new SlashCommandBuilder()
     .setName('schedule')
     .setDescription('Schedule a Rocket League league match')
