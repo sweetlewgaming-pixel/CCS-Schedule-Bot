@@ -266,7 +266,10 @@ async function pollMatchReminders(client) {
         }
 
         const minutesUntil = minutesUntilMatch(now, parsed);
-        if (minutesUntil < 0) {
+        const earliestReminderWindow = Math.min(
+          ...REMINDER_RULES.map((rule) => rule.offsetMinutes - REMINDER_GRACE_MINUTES)
+        );
+        if (minutesUntil < earliestReminderWindow) {
           continue;
         }
 
