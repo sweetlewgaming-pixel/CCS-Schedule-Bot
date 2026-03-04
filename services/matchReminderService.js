@@ -334,7 +334,7 @@ async function pollMatchReminders(client) {
             message = `${mentionA} ${mentionB} Reminder: you have a match today at ${formattedTime}.`;
           } else {
             const uploadCommandMention = await getUploadCommandMention(guild);
-            message = `${mentionA} ${mentionB} Match time is now: ${formattedTime}. Good luck! **Please use ${uploadCommandMention} to post your ballchasing link when you have finished the match.**`;
+            message = `${mentionA} ${mentionB} Match time is now: ${formattedTime}. Good luck! **Please use ${uploadCommandMention} in this channel to post your ballchasing link when you have finished the match.**`;
           }
 
           await channel.send({
