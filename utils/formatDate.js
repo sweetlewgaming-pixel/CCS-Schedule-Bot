@@ -19,14 +19,15 @@ function parseDateInput(input) {
 
 function parseTimeInput(inputTime) {
   const text = String(inputTime || '').trim();
-  const match = text.match(/^(1[0-2]|[1-9])(?::([0-5][0-9]))?$/);
+  const match = text.match(/^(1[0-2]|[1-9])(?::([0-5][0-9]))?\s*(am|pm)?$/i);
   if (!match) {
     return null;
   }
 
   const hour = Number(match[1]);
   const minute = match[2] || '00';
-  return { hour, minute };
+  const meridiem = (match[3] || 'pm').toLowerCase();
+  return { hour, minute, meridiem };
 }
 
 function formatScheduleDate(inputDate) {
@@ -44,10 +45,10 @@ function formatScheduleDate(inputDate) {
 function formatScheduleTime(inputTime) {
   const parsed = parseTimeInput(inputTime);
   if (!parsed) {
-    return `${inputTime}pm EST`;
+    return `${inputTime} EST`;
   }
 
-  return `${parsed.hour}:${parsed.minute}pm EST`;
+  return `${parsed.hour}:${parsed.minute}${parsed.meridiem} EST`;
 }
 
 module.exports = {

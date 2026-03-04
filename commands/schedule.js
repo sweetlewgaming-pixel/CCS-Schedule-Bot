@@ -119,11 +119,11 @@ function buildScheduleModal(league, week, matchId) {
 
   const timeInput = new TextInputBuilder()
     .setCustomId('time')
-    .setLabel('Time (PM EST)')
-    .setPlaceholder('8 or 8:30')
+    .setLabel('Time (EST)')
+    .setPlaceholder('8, 8:30, or 10:15am')
     .setRequired(true)
     .setStyle(TextInputStyle.Short)
-    .setMaxLength(5);
+    .setMaxLength(8);
 
   modal.addComponents(
     new ActionRowBuilder().addComponents(dateInput),
@@ -243,7 +243,7 @@ function validateDate(date) {
 }
 
 function validateTime(time) {
-  return /^(1[0-2]|[1-9])(?::([0-5][0-9]))?$/.test(time);
+  return /^(1[0-2]|[1-9])(?::([0-5][0-9]))?\s*(am|pm)?$/i.test(time);
 }
 
 function normalizeWeekValue(value) {
@@ -633,7 +633,7 @@ module.exports = {
 
     if (!validateTime(time)) {
       await interaction.reply({
-        content: 'Time must be 1-12 or 1-12:MM (00-59) in PM EST.',
+        content: 'Time must be 1-12 or 1-12:MM (00-59), optional am/pm (default is PM).',
         flags: MessageFlags.Ephemeral,
       });
       return;

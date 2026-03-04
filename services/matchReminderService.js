@@ -77,7 +77,7 @@ function parseDateAndTimeEST(dateText, timeText) {
     return null;
   }
 
-  const timeMatch = String(timeText || '').trim().match(/^(1[0-2]|[1-9])(?::([0-5][0-9]))?$/);
+  const timeMatch = String(timeText || '').trim().match(/^(1[0-2]|[1-9])(?::([0-5][0-9]))?\s*(am|pm)?$/i);
   if (!timeMatch) {
     return null;
   }
@@ -86,8 +86,9 @@ function parseDateAndTimeEST(dateText, timeText) {
   const day = Number(dateMatch[2]);
   const hour12 = Number(timeMatch[1]);
   const minute = Number(timeMatch[2] || 0);
+  const meridiem = String(timeMatch[3] || REMINDER_TIME_MODE).trim().toUpperCase();
   const hour24 =
-    REMINDER_TIME_MODE === 'AM'
+    meridiem === 'AM'
       ? hour12 === 12
         ? 0
         : hour12
@@ -106,12 +107,13 @@ function parseDateAndTimeEST(dateText, timeText) {
 function formatTimePmEst(timeText) {
   const parsed = parseDateAndTimeEST('1/1', timeText);
   if (!parsed) {
-    return `${String(timeText || '').trim()} ${REMINDER_TIME_MODE === 'AM' ? 'AM' : 'PM'} EST`;
+    return `${String(timeText || '').trim()} EST`;
   }
 
   const hour12 = parsed.hour === 0 ? 12 : parsed.hour > 12 ? parsed.hour - 12 : parsed.hour;
   const mm = String(parsed.minute).padStart(2, '0');
-  return `${hour12}:${mm} ${REMINDER_TIME_MODE === 'AM' ? 'AM' : 'PM'} EST`;
+  const meridiem = parsed.hour >= 12 ? 'PM' : 'AM';
+  return `${hour12}:${mm} ${meridiem} EST`;
 }
 
 function buildReminderKey(year, league, match, reminderType) {

@@ -49,7 +49,7 @@ function validateDate(date) {
 }
 
 function validateTime(time) {
-  return /^(1[0-2]|[1-9])(?::([0-5][0-9]))?$/.test(String(time || '').trim());
+  return /^(1[0-2]|[1-9])(?::([0-5][0-9]))?\s*(am|pm)?$/i.test(String(time || '').trim());
 }
 
 function isMeaningfulScheduleValue(value) {
@@ -115,12 +115,12 @@ function buildRescheduleModal(league, matchId, oldDate, oldTime) {
 
   const timeInput = new TextInputBuilder()
     .setCustomId('time')
-    .setLabel('New Time (PM EST)')
-    .setPlaceholder('8 or 8:30')
+    .setLabel('New Time (EST)')
+    .setPlaceholder('8, 8:30, or 10:15am')
     .setValue(String(oldTime || '').trim() || '8')
     .setRequired(true)
     .setStyle(TextInputStyle.Short)
-    .setMaxLength(5);
+    .setMaxLength(8);
 
   modal.addComponents(
     new ActionRowBuilder().addComponents(dateInput),
@@ -342,7 +342,7 @@ module.exports = {
 
     if (!validateTime(newTime)) {
       await interaction.reply({
-        content: 'Time must be 1-12 or 1-12:MM (00-59) in PM EST.',
+        content: 'Time must be 1-12 or 1-12:MM (00-59), optional am/pm (default is PM).',
         flags: MessageFlags.Ephemeral,
       });
       return;
