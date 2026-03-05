@@ -651,15 +651,16 @@ module.exports = {
       return;
     }
 
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
     let updateResult;
     try {
       updateResult = await updateMatchDateTime(league, matchId, date, time, { preventDuplicate: true });
     } catch (error) {
       if (error?.code === 403 || error?.response?.status === 403) {
-        await interaction.reply({
+        await interaction.editReply({
           content:
             'Google Sheets update failed: service account lacks edit permission on this league sheet. Share the spreadsheet with GOOGLE_CLIENT_EMAIL as Editor.',
-          flags: MessageFlags.Ephemeral,
         });
         return;
       }
@@ -682,16 +683,15 @@ module.exports = {
       const existingDate = updateResult.existingDate ? ` (${updateResult.existingDate})` : '';
       const existingTime = updateResult.existingTime ? ` (${updateResult.existingTime})` : '';
 
-      await interaction.reply({
+      await interaction.editReply({
         content: `This match is already scheduled${existingDate || existingTime ? ` [current date${existingDate} time${existingTime}]` : ''}. Are you sure you want to overwrite it?`,
         components: [buildOverwriteRow(token)],
-        flags: MessageFlags.Ephemeral,
       });
       return;
     }
 
     await publishScheduleResult(interaction, league, week, time, date, updateResult.match);
-    await interaction.reply({ content: '\u2705 Match scheduled successfully', flags: MessageFlags.Ephemeral });
+    await interaction.editReply({ content: '\u2705 Match scheduled successfully' });
   },
   async handleButtonInteraction(interaction) {
     if (interaction.customId.startsWith(`${OPEN_MODAL_BUTTON_PREFIX}:`)) {
