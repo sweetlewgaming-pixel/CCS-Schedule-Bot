@@ -39,3 +39,20 @@ Recommended:
 - Use a different `DISCORD_TOKEN` + `CLIENT_ID` in `.env.dev`
 - Set `.env.dev` `GUILD_ID` to your test server for instant slash command updates
 - Keep `.env.prod` only on your production host when possible
+
+## Match Reminder Overrides
+
+Default reminder cadence is 12h, 30m, and start time. To override reminders for specific matches, set:
+
+- `REMINDER_MATCH_OVERRIDES=match_id=minutes_before,minutes_before,...;other_match_id=...`
+
+Examples:
+
+- `REMINDER_MATCH_OVERRIDES=CCS-W5-M3=120,30,0`
+- `REMINDER_MATCH_OVERRIDES=CCS-W5-M3=60,15,0;CPL-W2-M8=30,0`
+
+Rules:
+
+- Match IDs are matched case-insensitively.
+- Offsets are minutes before match start (`0` means at start).
+- If a match ID is not listed, it keeps the default cadence.

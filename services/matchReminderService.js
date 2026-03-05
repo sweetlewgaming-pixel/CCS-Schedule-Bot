@@ -12,11 +12,66 @@ const POLL_INTERVAL_MS = 60 * 1000;
 const REMINDER_GRACE_MINUTES = 2;
 const STATE_PATH = path.join(__dirname, '..', 'data', 'reminder-state.json');
 const REMINDER_TIME_MODE = String(process.env.REMINDER_TIME_MODE || 'PM').trim().toUpperCase();
-const REMINDER_RULES = [
+const DEFAULT_REMINDER_RULES = [
   { type: 'h12', offsetMinutes: 12 * 60 },
   { type: 'm30', offsetMinutes: 30 },
   { type: 'start', offsetMinutes: 0 },
 ];
+const REMINDER_MATCH_OVERRIDES_RAW = String(process.env.REMINDER_MATCH_OVERRIDES || '').trim();
+
+function normalizeMatchId(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizeOverrideRules(rawOffsets) {
+  const parsedOffsets = String(rawOffsets || '')
+    .split(',')
+    .map((part) => Number(String(part || '').trim()))
+    .filter((value) => Number.isFinite(value) && value >= 0)
+    .map((value) => Math.floor(value));
+
+  if (!parsedOffsets.length) {
+    return null;
+  }
+
+  const uniqueSorted = [...new Set(parsedOffsets)].sort((a, b) => b - a);
+  return uniqueSorted.map((offsetMinutes) => ({
+    type: offsetMinutes === 0 ? 'start' : `m${offsetMinutes}`,
+    offsetMinutes,
+  }));
+}
+
+function parseMatchReminderOverrides(rawValue) {
+  if (!rawValue) {
+    return new Map();
+  }
+
+  const overrides = new Map();
+  const entries = rawValue.split(';');
+
+  for (const entry of entries) {
+    const [rawMatchId, rawOffsets] = String(entry || '').split('=');
+    const matchId = normalizeMatchId(rawMatchId);
+    const rules = normalizeOverrideRules(rawOffsets);
+    if (!matchId || !rules) {
+      continue;
+    }
+    overrides.set(matchId, rules);
+  }
+
+  return overrides;
+}
+
+const MATCH_REMINDER_OVERRIDES = parseMatchReminderOverrides(REMINDER_MATCH_OVERRIDES_RAW);
+const MATCH_REMINDER_MESSAGE_OVERRIDES = new Map([
+  [
+    'ccs-w5-shockwave-vs-stars',
+    {
+      h12: 'Reminder: welp, you idiots decided this was a good idea. Match time is tomorrow at {time}.',
+      m30: "Reminder: wakey wakey...don't be that guy that sleeps in and misses your match. Game time is {time}.",
+    },
+  ],
+]);
 
 function ensureStateDir() {
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
@@ -153,6 +208,28 @@ async function mentionForTeam(guild, teamName) {
     roleId,
     mention: roleId ? `<@&${roleId}>` : `@${teamName}`,
   };
+}
+
+function getReminderRulesForMatch(match) {
+  const matchIdKey = normalizeMatchId(match.matchId);
+  return MATCH_REMINDER_OVERRIDES.get(matchIdKey) || DEFAULT_REMINDER_RULES;
+}
+
+function formatReminderMessageTemplate(template, formattedTime) {
+  return String(template || '').replace(/\{time\}/gi, formattedTime);
+}
+
+function getMatchReminderMessageOverride(match, reminderType, formattedTime) {
+  const matchIdKey = normalizeMatchId(match.matchId);
+  const override = MATCH_REMINDER_MESSAGE_OVERRIDES.get(matchIdKey);
+  if (!override) {
+    return '';
+  }
+  const template = String(override[reminderType] || '').trim();
+  if (!template) {
+    return '';
+  }
+  return formatReminderMessageTemplate(template, formattedTime);
 }
 
 async function getUploadCommandMention(guild) {
@@ -292,8 +369,9 @@ async function pollMatchReminders(client) {
         }
 
         const minutesUntil = minutesUntilMatch(now, parsed);
+        const reminderRules = getReminderRulesForMatch(match);
         const earliestReminderWindow = Math.min(
-          ...REMINDER_RULES.map((rule) => rule.offsetMinutes - REMINDER_GRACE_MINUTES)
+          ...reminderRules.map((rule) => rule.offsetMinutes - REMINDER_GRACE_MINUTES)
         );
         if (minutesUntil < earliestReminderWindow) {
           continue;
@@ -317,7 +395,7 @@ async function pollMatchReminders(client) {
         const roleMentions = [mentionAData.roleId, mentionBData.roleId].filter(Boolean);
         const formattedTime = formatTimePmEst(match.time);
 
-        for (const rule of REMINDER_RULES) {
+        for (const rule of reminderRules) {
           const upperBound = rule.offsetMinutes;
           const lowerBound = rule.offsetMinutes - REMINDER_GRACE_MINUTES;
           if (!(minutesUntil <= upperBound && minutesUntil >= lowerBound)) {
@@ -330,10 +408,13 @@ async function pollMatchReminders(client) {
           }
 
           let message = '';
-          if (rule.type === 'h12') {
-            message = `${mentionA} ${mentionB} Reminder: you have a match today at ${formattedTime}.`;
-          } else if (rule.type === 'm30') {
-            message = `${mentionA} ${mentionB} Reminder: you have a match today at ${formattedTime}.`;
+          if (rule.offsetMinutes > 0) {
+            const customOverride = getMatchReminderMessageOverride(match, rule.type, formattedTime);
+            if (customOverride) {
+              message = `${mentionA} ${mentionB} ${customOverride}`;
+            } else {
+              message = `${mentionA} ${mentionB} Reminder: you have a match today at ${formattedTime}.`;
+            }
           } else {
             const uploadCommandMention = await getUploadCommandMention(guild);
             message = `${mentionA} ${mentionB} Match time is now: ${formattedTime}. Good luck! **Please use ${uploadCommandMention} in this channel to post your ballchasing link when you have finished the match.**`;
