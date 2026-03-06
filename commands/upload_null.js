@@ -101,6 +101,31 @@ async function buildModAdminAlertMentions(guild) {
   return [...mentionIds].map((id) => `<@&${id}>`).join(' ');
 }
 
+async function buildCommissionerAlertMentions(guild) {
+  if (!guild) {
+    return '';
+  }
+
+  if (!guild.roles.cache.size) {
+    await guild.roles.fetch();
+  }
+
+  const mentionIds = new Set();
+  for (const role of guild.roles.cache.values()) {
+    const normalized = normalizeRoleName(role.name);
+    if (
+      normalized === 'commissioner' ||
+      normalized === 'commissioners' ||
+      normalized === 'commisioner' ||
+      normalized === 'commisioners'
+    ) {
+      mentionIds.add(role.id);
+    }
+  }
+
+  return [...mentionIds].map((id) => `<@&${id}>`).join(' ');
+}
+
 async function notifyStaffUploadFailure(guild, channel, message) {
   if (!channel) {
     return;
@@ -110,14 +135,13 @@ async function notifyStaffUploadFailure(guild, channel, message) {
   await channel.send(`${prefix}${message}`).catch(() => {});
 }
 
-async function notifyStaffTeamMismatch(guild, channel, match, teamCheck) {
-  const foundText = teamCheck.foundTeams.length ? teamCheck.foundTeams.join(', ') : 'None found';
-  const missingText = teamCheck.missingTeams.length ? teamCheck.missingTeams.join(', ') : 'N/A';
-  await notifyStaffUploadFailure(
-    guild,
-    channel,
-    `⚠️ Team mismatch on /upload_admin for ${match.awayTeam} at ${match.homeTeam}. Expected: ${match.homeTeam}, ${match.awayTeam}. Found in link: ${foundText}. Missing expected teams: ${missingText}. Upload continued.`
-  );
+async function notifyStaffTeamMismatch(guild, channel) {
+  if (!channel) {
+    return;
+  }
+  const mentions = await buildCommissionerAlertMentions(guild);
+  const prefix = mentions ? `${mentions} ` : '';
+  await channel.send(`${prefix}Team names need to be adjusted in stats.`).catch(() => {});
 }
 
 function cleanupPendingSelections() {
@@ -316,7 +340,7 @@ function parseFinalCustomId(customId) {
   return { action: parts[1], token: parts[2] };
 }
 
-async function processUploadStaff(interaction, league, match, link, groupData) {
+async function processUploadStaff(interaction, league, match, link, groupData, teamMismatchDetected) {
   try {
     await updateMatchBallchasingLink(league, match.matchId, link, { preventDuplicate: false });
   } catch (error) {
@@ -341,6 +365,9 @@ async function processUploadStaff(interaction, league, match, link, groupData) {
   await interaction.channel
     .send(`✅ Ballchasing link uploaded by <@${interaction.user.id}> (staff mode). No additional uploads are needed for this match.`)
     .catch(() => {});
+  if (teamMismatchDetected) {
+    await notifyStaffTeamMismatch(interaction.guild, interaction.channel);
+  }
 
   (async () => {
     try {
@@ -418,11 +445,9 @@ async function executeUploadStaff(interaction, league, match, link) {
   }
 
   const teamCheck = compareGroupTeamsToMatch(group.data, match.homeTeam, match.awayTeam);
-  if (teamCheck.canValidate && !teamCheck.isMatch) {
-    await notifyStaffTeamMismatch(interaction.guild, interaction.channel, match, teamCheck);
-  }
+  const teamMismatchDetected = teamCheck.canValidate && !teamCheck.isMatch;
 
-  await processUploadStaff(interaction, league, match, link, group.data);
+  await processUploadStaff(interaction, league, match, link, group.data, teamMismatchDetected);
 }
 
 module.exports = {
@@ -769,11 +794,9 @@ module.exports = {
     }
 
     const teamCheck = compareGroupTeamsToMatch(group.data, pending.match.homeTeam, pending.match.awayTeam);
-    if (teamCheck.canValidate && !teamCheck.isMatch) {
-      await notifyStaffTeamMismatch(interaction.guild, interaction.channel, pending.match, teamCheck);
-    }
+    const teamMismatchDetected = teamCheck.canValidate && !teamCheck.isMatch;
 
-    await processUploadStaff(interaction, pending.league, pending.match, pending.link, group.data);
+    await processUploadStaff(interaction, pending.league, pending.match, pending.link, group.data, teamMismatchDetected);
   },
 
   async handleModalSubmit(interaction) {
@@ -850,3 +873,4 @@ module.exports = {
     });
   },
 };
+

@@ -143,6 +143,31 @@ async function buildModAdminAlertMentions(guild) {
   return [...mentionIds].map((id) => `<@&${id}>`).join(' ');
 }
 
+async function buildCommissionerAlertMentions(guild) {
+  if (!guild) {
+    return '';
+  }
+
+  if (!guild.roles.cache.size) {
+    await guild.roles.fetch();
+  }
+
+  const mentionIds = new Set();
+  for (const role of guild.roles.cache.values()) {
+    const normalized = normalizeRoleName(role.name);
+    if (
+      normalized === 'commissioner' ||
+      normalized === 'commissioners' ||
+      normalized === 'commisioner' ||
+      normalized === 'commisioners'
+    ) {
+      mentionIds.add(role.id);
+    }
+  }
+
+  return [...mentionIds].map((id) => `<@&${id}>`).join(' ');
+}
+
 async function notifyStaffUploadFailure(guild, channel, message) {
   if (!channel) {
     return;
@@ -152,17 +177,16 @@ async function notifyStaffUploadFailure(guild, channel, message) {
   await channel.send(`${prefix}${message}`).catch(() => {});
 }
 
-async function notifyStaffTeamMismatch(guild, channel, match, teamCheck) {
-  const foundText = teamCheck.foundTeams.length ? teamCheck.foundTeams.join(', ') : 'None found';
-  const missingText = teamCheck.missingTeams.length ? teamCheck.missingTeams.join(', ') : 'N/A';
-  await notifyStaffUploadFailure(
-    guild,
-    channel,
-    `⚠️ Team mismatch on /upload for ${match.awayTeam} at ${match.homeTeam}. Expected: ${match.homeTeam}, ${match.awayTeam}. Found in link: ${foundText}. Missing expected teams: ${missingText}. Upload continued.`
-  );
+async function notifyStaffTeamMismatch(guild, channel) {
+  if (!channel) {
+    return;
+  }
+  const mentions = await buildCommissionerAlertMentions(guild);
+  const prefix = mentions ? `${mentions} ` : '';
+  await channel.send(`${prefix}Team names need to be adjusted in stats.`).catch(() => {});
 }
 
-async function processUpload(interaction, league, match, link, groupData) {
+async function processUpload(interaction, league, match, link, groupData, teamMismatchDetected) {
   try {
     await updateMatchBallchasingLink(league, match.matchId, link, { preventDuplicate: false });
   } catch (error) {
@@ -200,6 +224,9 @@ async function processUpload(interaction, league, match, link, groupData) {
   await interaction.channel
     .send(`✅ Ballchasing link uploaded by <@${interaction.user.id}>. No additional uploads are needed for this match.`)
     .catch(() => {});
+  if (teamMismatchDetected) {
+    await notifyStaffTeamMismatch(interaction.guild, interaction.channel);
+  }
 
   (async () => {
     try {
@@ -340,10 +367,9 @@ module.exports = {
     }
 
     const teamCheck = compareGroupTeamsToMatch(group.data, match.homeTeam, match.awayTeam);
-    if (teamCheck.canValidate && !teamCheck.isMatch) {
-      await notifyStaffTeamMismatch(interaction.guild, interaction.channel, match, teamCheck);
-    }
+    const teamMismatchDetected = teamCheck.canValidate && !teamCheck.isMatch;
 
-    await processUpload(interaction, league, match, link, group.data);
+    await processUpload(interaction, league, match, link, group.data, teamMismatchDetected);
   },
 };
+
