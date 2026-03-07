@@ -4,6 +4,26 @@ function extractGroupIdFromUrl(groupUrl) {
   return match ? match[1] : null;
 }
 
+const BALLCHASING_REQUEST_TIMEOUT_MS = Math.max(3000, Number(process.env.BALLCHASING_REQUEST_TIMEOUT_MS || 15000) || 15000);
+
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), BALLCHASING_REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new Error(`Ballchasing request timed out after ${BALLCHASING_REQUEST_TIMEOUT_MS}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function fetchBallchasingGroup(groupUrl) {
   const token = String(process.env.BALLCHASING_API_KEY || '').trim();
   if (!token) {
@@ -15,7 +35,7 @@ async function fetchBallchasingGroup(groupUrl) {
     throw new Error('Invalid ballchasing group link.');
   }
 
-  const response = await fetch(`https://ballchasing.com/api/groups/${groupId}`, {
+  const response = await fetchWithTimeout(`https://ballchasing.com/api/groups/${groupId}`, {
     headers: {
       Authorization: token,
     },
@@ -47,7 +67,7 @@ async function fetchBallchasingReplay(replayId) {
     throw new Error('BALLCHASING_API_KEY is missing from environment.');
   }
 
-  const response = await fetch(`https://ballchasing.com/api/replays/${encodeURIComponent(String(replayId || '').trim())}`, {
+  const response = await fetchWithTimeout(`https://ballchasing.com/api/replays/${encodeURIComponent(String(replayId || '').trim())}`, {
     headers: {
       Authorization: token,
     },
@@ -90,7 +110,7 @@ async function fetchGroupReplayTeammateDistanceMap(groupUrl) {
     throw new Error('Invalid ballchasing group link.');
   }
 
-  const listResponse = await fetch(
+  const listResponse = await fetchWithTimeout(
     `https://ballchasing.com/api/replays?group=${encodeURIComponent(groupId)}&count=200`,
     {
       headers: {
