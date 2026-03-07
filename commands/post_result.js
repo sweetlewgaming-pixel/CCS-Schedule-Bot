@@ -422,6 +422,38 @@ function buildPreviewControlContent(preview) {
   return `${base}\nUse Edit MVP to change before confirming.`;
 }
 
+async function sendLongEphemeralReply(interaction, text) {
+  const MAX_LEN = 1900;
+  const value = String(text || '');
+  if (value.length <= MAX_LEN) {
+    await interaction.editReply(value);
+    return;
+  }
+
+  const chunks = [];
+  let remaining = value;
+  while (remaining.length > 0) {
+    if (remaining.length <= MAX_LEN) {
+      chunks.push(remaining);
+      break;
+    }
+    let splitAt = remaining.lastIndexOf('\n', MAX_LEN);
+    if (splitAt < 1) {
+      splitAt = MAX_LEN;
+    }
+    chunks.push(remaining.slice(0, splitAt));
+    remaining = remaining.slice(splitAt).replace(/^\n+/, '');
+  }
+
+  await interaction.editReply(chunks[0]);
+  for (const chunk of chunks.slice(1)) {
+    await interaction.followUp({
+      content: chunk,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+}
+
 async function getMatchesForAutocomplete(league, week) {
   const key = `${String(league).toUpperCase()}|${String(week)}`;
   const now = Date.now();
@@ -857,7 +889,8 @@ module.exports = {
         return;
       }
 
-      await interaction.editReply(
+      await sendLongEphemeralReply(
+        interaction,
         `${summaryBlocks.join('\n\n')}\n\nPreview session token: \`${previewSessionToken}\`\nUse the buttons in #${previewChannel.name} to edit MVP and confirm each post.`
       );
     } catch (error) {
