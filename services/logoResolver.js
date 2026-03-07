@@ -114,7 +114,15 @@ function scoreNameMatch(teamName, fileBaseName) {
 function getLeagueLogoDir(league) {
   const key = `LOGO_DIR_${String(league || '').toUpperCase()}`;
   const value = String(process.env[key] || '').trim();
-  return value || '';
+  if (value) {
+    return value;
+  }
+
+  const fallback = path.join(__dirname, '..', 'assets', 'logos', String(league || '').toUpperCase());
+  if (fs.existsSync(fallback)) {
+    return fallback;
+  }
+  return '';
 }
 
 function walkImageFiles(rootDir) {
@@ -182,7 +190,13 @@ function resolveTeamLogoPath(league, teamName) {
 }
 
 function resolveLeagueLogoPath(league) {
-  const dir = String(process.env.LEAGUE_LOGO_DIR || '').trim();
+  let dir = String(process.env.LEAGUE_LOGO_DIR || '').trim();
+  if (!dir) {
+    const fallback = path.join(__dirname, '..', 'assets', 'logos', 'league');
+    if (fs.existsSync(fallback)) {
+      dir = fallback;
+    }
+  }
   if (!dir || !fs.existsSync(dir)) {
     return '';
   }
