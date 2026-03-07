@@ -9,6 +9,7 @@ const MVP_CARD_SIZE = { width: Number(process.env.MVP_CARD_WIDTH || 900), height
 let browserPromise = null;
 const logoDataUrlCache = new Map();
 let ninjasTargetVisibleRatio = null;
+let embeddedFontCssCache = null;
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -31,9 +32,60 @@ function ensureDataUrl(filePath) {
       ? 'image/webp'
       : (ext === '.jpg' || ext === '.jpeg')
         ? 'image/jpeg'
+        : ext === '.woff2'
+          ? 'font/woff2'
+          : ext === '.woff'
+            ? 'font/woff'
         : 'application/octet-stream';
   const bytes = fs.readFileSync(filePath);
   return `data:${mime};base64,${bytes.toString('base64')}`;
+}
+
+function buildEmbeddedFontCss() {
+  if (embeddedFontCssCache !== null) {
+    return embeddedFontCssCache;
+  }
+
+  const fontDefs = [
+    {
+      family: 'FeedDisplay',
+      weight: 700,
+      style: 'normal',
+      filePath: path.join(__dirname, '..', 'node_modules', '@fontsource', 'oswald', 'files', 'oswald-latin-700-normal.woff2'),
+    },
+    {
+      family: 'FeedDisplay',
+      weight: 400,
+      style: 'normal',
+      filePath: path.join(__dirname, '..', 'node_modules', '@fontsource', 'anton', 'files', 'anton-latin-400-normal.woff2'),
+    },
+    {
+      family: 'FeedBody',
+      weight: 700,
+      style: 'normal',
+      filePath: path.join(__dirname, '..', 'node_modules', '@fontsource', 'rajdhani', 'files', 'rajdhani-latin-700-normal.woff2'),
+    },
+    {
+      family: 'FeedBody',
+      weight: 600,
+      style: 'normal',
+      filePath: path.join(__dirname, '..', 'node_modules', '@fontsource', 'rajdhani', 'files', 'rajdhani-latin-600-normal.woff2'),
+    },
+  ];
+
+  const blocks = [];
+  for (const font of fontDefs) {
+    if (!fs.existsSync(font.filePath)) {
+      continue;
+    }
+    const src = ensureDataUrl(font.filePath);
+    blocks.push(
+      `@font-face{font-family:'${font.family}';font-style:${font.style};font-weight:${font.weight};font-display:block;src:url('${src}') format('woff2');}`
+    );
+  }
+
+  embeddedFontCssCache = blocks.join('');
+  return embeddedFontCssCache;
 }
 
 function findNinjasLogoPath() {
@@ -242,6 +294,7 @@ async function renderResultCard(data) {
   const homeLogoDataUrl = await ensureNormalizedLogoDataUrl(data.homeLogoPath);
   const awayLogoDataUrl = await ensureNormalizedLogoDataUrl(data.awayLogoPath);
   const vars = {
+    EMBEDDED_FONT_CSS: buildEmbeddedFontCss(),
     LEAGUE: escapeHtml(data.leagueLabel || data.league || ''),
     WEEK: escapeHtml(data.week || ''),
     HOME_TEAM: escapeHtml(data.homeTeam || ''),
@@ -262,6 +315,7 @@ async function renderResultCard(data) {
 async function renderMvpCard(data) {
   const templatePath = path.join(__dirname, '..', 'templates', 'result-feed', 'mvp.html');
   const vars = {
+    EMBEDDED_FONT_CSS: buildEmbeddedFontCss(),
     MVP_NAME: escapeHtml(data.mvpName || 'TBD'),
     MVP_NAME_SIZE_VW: computeMvpNameSizeVw(data.mvpName || 'TBD'),
     MVP_LINE1: escapeHtml(data.mvpLine1 || ''),

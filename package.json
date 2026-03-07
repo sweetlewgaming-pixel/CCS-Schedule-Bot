@@ -10,6 +10,9 @@
     "render:cards": "node src/render/run.js"
   },
   "dependencies": {
+    "@fontsource/anton": "^5.2.7",
+    "@fontsource/oswald": "^5.2.8",
+    "@fontsource/rajdhani": "^5.2.7",
     "@napi-rs/canvas": "^0.1.95",
     "discord.js": "^14.16.3",
     "dotenv": "^16.4.5",
