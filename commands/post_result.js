@@ -27,8 +27,8 @@ const { slugifyTeamName } = require('../utils/slugify');
 
 const LEAGUES = ['CCS', 'CPL', 'CAS', 'CNL'];
 const LEAGUE_OPTION_ALL = 'ALL';
-const POST_GAP_MS = 3200;
-const PREVIEW_POST_GAP_MS = Math.max(0, Number(process.env.PREVIEW_POST_GAP_MS || 250) || 250);
+const POST_GAP_MS = Math.max(0, Number(process.env.POST_RESULT_POST_GAP_MS || 1200) || 1200);
+const PREVIEW_POST_GAP_MS = Math.max(0, Number(process.env.PREVIEW_POST_GAP_MS || 100) || 100);
 const ACTIVE_RENDER_BACKEND = String(process.env.RENDER_BACKEND || 'html').trim().toLowerCase();
 const MATCH_AUTOCOMPLETE_CACHE_MS = 30_000;
 const matchAutocompleteCache = new Map();

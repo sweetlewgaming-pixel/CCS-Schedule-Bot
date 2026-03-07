@@ -5,6 +5,7 @@ const { createCanvas, loadImage } = require('@napi-rs/canvas');
 
 const RESULT_CARD_SIZE = { width: Number(process.env.RESULT_CARD_WIDTH || 1200), height: Number(process.env.RESULT_CARD_HEIGHT || 675) };
 const MVP_CARD_SIZE = { width: Number(process.env.MVP_CARD_WIDTH || 900), height: Number(process.env.MVP_CARD_HEIGHT || 1200) };
+const RENDER_WAIT_UNTIL = String(process.env.RENDER_WAIT_UNTIL || 'domcontentloaded').trim().toLowerCase();
 
 let browserPromise = null;
 const logoDataUrlCache = new Map();
@@ -237,7 +238,8 @@ async function renderTemplateToPng(templatePath, variables, size) {
 
   const browser = await getBrowser();
   const page = await browser.newPage({ viewport: { width: size.width, height: size.height } });
-  await page.setContent(html, { waitUntil: 'networkidle' });
+  // Templates are self-contained (embedded fonts/logos), so waiting for network idle is unnecessary.
+  await page.setContent(html, { waitUntil: RENDER_WAIT_UNTIL });
   const png = await page.screenshot({ type: 'png' });
   await page.close();
   return png;
