@@ -29,6 +29,10 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds],
 });
 
+function shouldSkipCommandRegistration() {
+  return String(process.env.SKIP_COMMAND_REGISTRATION || '').trim().toLowerCase() === 'true';
+}
+
 client.commands = new Collection();
 client.commands.set(scheduleCommand.data.name, scheduleCommand);
 client.commands.set(rescheduleCommand.data.name, rescheduleCommand);
@@ -44,12 +48,27 @@ client.commands.set(helpCommand.data.name, helpCommand);
 client.commands.set(postResultCommand.data.name, postResultCommand);
 
 async function registerSlashCommands() {
+  if (shouldSkipCommandRegistration()) {
+    console.log('Skipping slash command registration (SKIP_COMMAND_REGISTRATION=true).');
+    return;
+  }
+
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
   const commands = [...client.commands.values()].map((command) => command.data.toJSON());
 
   if (process.env.GUILD_ID) {
-    await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID), { body: commands });
-    console.log(`Registered ${commands.length} guild command(s) for ${process.env.GUILD_ID}.`);
+    try {
+      await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID), { body: commands });
+      console.log(`Registered ${commands.length} guild command(s) for ${process.env.GUILD_ID}.`);
+    } catch (error) {
+      if (Number(error?.code) === 50001) {
+        console.log(
+          `Skipping guild command registration for ${process.env.GUILD_ID} due to Missing Access (50001).`
+        );
+        return;
+      }
+      throw error;
+    }
     return;
   }
 
@@ -80,6 +99,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const command = client.commands.get(interaction.commandName);
       if (command?.handleChatInput) {
         await command.handleChatInput(interaction);
+      } else {
+        await interaction.reply({
+          content: `Command "${interaction.commandName}" is not available on this bot instance right now.`,
+          flags: MessageFlags.Ephemeral,
+        });
       }
       return;
     }
@@ -125,7 +149,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      if (postResultCommand.handleSelectMenu) {
+        await postResultCommand.handleSelectMenu(interaction);
+      }
+
+      if (interaction.deferred || interaction.replied) {
+        return;
+      }
+
       await scheduleCommand.handleSelectMenu(interaction);
+      if (interaction.deferred || interaction.replied) {
+        return;
+      }
+
+      await interaction.reply({
+        content: 'That menu action is no longer available. Please run the command again.',
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
 
@@ -197,6 +237,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (suggestPlayersCommand.handleButtonInteraction) {
         await suggestPlayersCommand.handleButtonInteraction(interaction);
       }
+
+      if (interaction.deferred || interaction.replied) {
+        return;
+      }
+
+      if (postResultCommand.handleButtonInteraction) {
+        await postResultCommand.handleButtonInteraction(interaction);
+      }
+
+      if (interaction.deferred || interaction.replied) {
+        return;
+      }
+
+      await interaction.reply({
+        content: 'That button action is no longer available. Please run the command again.',
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
 
@@ -242,6 +299,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (rescheduleCommand.handleModalSubmit) {
         await rescheduleCommand.handleModalSubmit(interaction);
       }
+
+      if (interaction.deferred || interaction.replied) {
+        return;
+      }
+
+      await interaction.reply({
+        content: 'That modal action is no longer available. Please run the command again.',
+        flags: MessageFlags.Ephemeral,
+      });
     }
   } catch (error) {
     console.error('Interaction handler error:', error);
