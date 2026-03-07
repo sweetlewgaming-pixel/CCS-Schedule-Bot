@@ -8,6 +8,8 @@ const {
   StringSelectMenuBuilder,
   SlashCommandBuilder,
 } = require('discord.js');
+const fs = require('fs');
+const path = require('path');
 
 const { isAdminAuthorized } = require('../utils/permissions');
 const {
@@ -37,6 +39,7 @@ const PREVIEW_SELECT_PREFIX = 'post_result_preview_mvp';
 const PREVIEW_CHANNEL_NAME = 'feed-preview';
 const PREVIEW_CHANNEL_ENV = 'RESULT_FEED_PREVIEW_CHANNEL';
 const previewSessions = new Map();
+const PREVIEW_STATE_PATH = path.join(__dirname, '..', 'data', 'post-result-preview-sessions.json');
 const LEAGUE_DISPLAY_NAMES = {
   CCS: 'CLUTCH COMPETITOR SERIES',
   CPL: 'CLUTCH PROSPECT LEAGUE',
@@ -276,16 +279,78 @@ function buildMvpCandidatesFromInputRows(inputRows, match) {
     .sort((a, b) => b.score - a.score);
 }
 
+function ensurePreviewStateDir() {
+  fs.mkdirSync(path.dirname(PREVIEW_STATE_PATH), { recursive: true });
+}
+
+function serializePreviewSession(session) {
+  return {
+    ...session,
+    previews: Array.isArray(session?.previews)
+      ? session.previews.map((preview) => ({
+          ...preview,
+          resultPng: Buffer.isBuffer(preview?.resultPng) ? preview.resultPng.toString('base64') : '',
+          mvpPng: Buffer.isBuffer(preview?.mvpPng) ? preview.mvpPng.toString('base64') : '',
+        }))
+      : [],
+  };
+}
+
+function deserializePreviewSession(session) {
+  return {
+    ...session,
+    previews: Array.isArray(session?.previews)
+      ? session.previews.map((preview) => ({
+          ...preview,
+          resultPng: preview?.resultPng ? Buffer.from(String(preview.resultPng), 'base64') : Buffer.alloc(0),
+          mvpPng: preview?.mvpPng ? Buffer.from(String(preview.mvpPng), 'base64') : Buffer.alloc(0),
+        }))
+      : [],
+  };
+}
+
+function savePreviewSessions() {
+  ensurePreviewStateDir();
+  const payload = {};
+  for (const [token, session] of previewSessions.entries()) {
+    payload[token] = serializePreviewSession(session);
+  }
+  fs.writeFileSync(PREVIEW_STATE_PATH, JSON.stringify(payload, null, 2));
+}
+
+function loadPreviewSessions() {
+  try {
+    ensurePreviewStateDir();
+    if (!fs.existsSync(PREVIEW_STATE_PATH)) {
+      return;
+    }
+    const parsed = JSON.parse(fs.readFileSync(PREVIEW_STATE_PATH, 'utf8'));
+    if (!parsed || typeof parsed !== 'object') {
+      return;
+    }
+    for (const [token, session] of Object.entries(parsed)) {
+      previewSessions.set(token, deserializePreviewSession(session));
+    }
+  } catch (_) {
+    // Ignore malformed state and continue with empty in-memory sessions.
+  }
+}
+
 function createSessionToken() {
   return Math.random().toString(36).slice(2, 2 + PREVIEW_TOKEN_LENGTH);
 }
 
 function cleanupPreviewSessions() {
   const now = Date.now();
+  let changed = false;
   for (const [token, session] of previewSessions.entries()) {
     if (now - Number(session?.createdAt || 0) > PREVIEW_SESSION_TTL_MS) {
       previewSessions.delete(token);
+      changed = true;
     }
+  }
+  if (changed) {
+    savePreviewSessions();
   }
 }
 
@@ -296,6 +361,7 @@ function createPreviewSession(payload) {
     ...payload,
     createdAt: Date.now(),
   });
+  savePreviewSessions();
   return token;
 }
 
@@ -544,6 +610,8 @@ function getDisplayRecordsForMatch({ standingsMap, homeTeam, awayTeam, week, fal
     adjusted: true,
   };
 }
+
+loadPreviewSessions();
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -839,6 +907,7 @@ module.exports = {
             controlMessageId: '',
           };
           previewSession.previews.push(previewEntry);
+          savePreviewSessions();
 
           let resultMessage;
           let controlMessage;
@@ -854,11 +923,13 @@ module.exports = {
             });
           } catch (error) {
             previewSession.previews.pop();
+            savePreviewSessions();
             skipped.push(`match_id ${match.matchId}: preview post failed (${error.message})`);
             continue;
           }
           previewEntry.resultMessageId = resultMessage.id;
           previewEntry.controlMessageId = controlMessage.id;
+          savePreviewSessions();
           await sleep(PREVIEW_POST_GAP_MS);
 
           if (displayRecords.adjusted) {
@@ -1000,6 +1071,7 @@ module.exports = {
     await sleep(POST_GAP_MS);
 
     preview.confirmed = true;
+    savePreviewSessions();
     await interaction.message.edit({
       content: buildPreviewControlContent(preview),
       components: buildPreviewControls(parsed.token, preview, parsed.index, false),
@@ -1067,6 +1139,7 @@ module.exports = {
       mvpLeftAccentColor: preview.winnerColor,
       leagueLogoPath: preview.leagueLogoPath,
     });
+    savePreviewSessions();
 
     await interaction.update({
       content: buildPreviewControlContent(preview),
