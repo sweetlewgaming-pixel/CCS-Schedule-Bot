@@ -2,6 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const { chromium } = require('playwright');
 const { createCanvas, loadImage } = require('@napi-rs/canvas');
+const { weekResultCard } = require('../src/render/cards/weekResultCard');
+const { mvpCard } = require('../src/render/cards/mvpCard');
 
 const RESULT_CARD_SIZE = { width: Number(process.env.RESULT_CARD_WIDTH || 1200), height: Number(process.env.RESULT_CARD_HEIGHT || 675) };
 const MVP_CARD_SIZE = { width: Number(process.env.MVP_CARD_WIDTH || 900), height: Number(process.env.MVP_CARD_HEIGHT || 1200) };
@@ -239,40 +241,76 @@ function computeMvpNameSizeVw(name) {
 
 async function renderResultCard(data) {
   const templatePath = path.join(__dirname, '..', 'templates', 'result-feed', 'result.html');
-  const homeLogoDataUrl = await ensureNormalizedLogoDataUrl(data.homeLogoPath);
-  const awayLogoDataUrl = await ensureNormalizedLogoDataUrl(data.awayLogoPath);
-  const vars = {
-    LEAGUE: escapeHtml(data.leagueLabel || data.league || ''),
-    WEEK: escapeHtml(data.week || ''),
-    HOME_TEAM: escapeHtml(data.homeTeam || ''),
-    AWAY_TEAM: escapeHtml(data.awayTeam || ''),
-    HOME_WINS: escapeHtml(data.homeWins ?? 0),
-    AWAY_WINS: escapeHtml(data.awayWins ?? 0),
-    HOME_RECORD: data.homeRecord ? escapeHtml(`(${data.homeRecord})`) : '',
-    AWAY_RECORD: data.awayRecord ? escapeHtml(`(${data.awayRecord})`) : '',
-    RESULT_ACCENT_COLOR: escapeHtml(data.resultAccentColor || 'transparent'),
-    HOME_LOGO: homeLogoDataUrl,
-    AWAY_LOGO: awayLogoDataUrl,
-    LEAGUE_LOGO: buildLeagueLogoMarkup(data.leagueLogoPath, { league: data.league, cardType: 'result' }),
-  };
+  try {
+    const homeLogoDataUrl = await ensureNormalizedLogoDataUrl(data.homeLogoPath);
+    const awayLogoDataUrl = await ensureNormalizedLogoDataUrl(data.awayLogoPath);
+    const vars = {
+      LEAGUE: escapeHtml(data.leagueLabel || data.league || ''),
+      WEEK: escapeHtml(data.week || ''),
+      HOME_TEAM: escapeHtml(data.homeTeam || ''),
+      AWAY_TEAM: escapeHtml(data.awayTeam || ''),
+      HOME_WINS: escapeHtml(data.homeWins ?? 0),
+      AWAY_WINS: escapeHtml(data.awayWins ?? 0),
+      HOME_RECORD: data.homeRecord ? escapeHtml(`(${data.homeRecord})`) : '',
+      AWAY_RECORD: data.awayRecord ? escapeHtml(`(${data.awayRecord})`) : '',
+      RESULT_ACCENT_COLOR: escapeHtml(data.resultAccentColor || 'transparent'),
+      HOME_LOGO: homeLogoDataUrl,
+      AWAY_LOGO: awayLogoDataUrl,
+      LEAGUE_LOGO: buildLeagueLogoMarkup(data.leagueLogoPath, { league: data.league, cardType: 'result' }),
+    };
 
-  return renderTemplateToPng(templatePath, vars, RESULT_CARD_SIZE);
+    return await renderTemplateToPng(templatePath, vars, RESULT_CARD_SIZE);
+  } catch (error) {
+    const fallback = await weekResultCard(
+      {
+        leagueTitle: data.leagueLabel || data.league || '',
+        weekLabel: String(data.week || 'Week').trim(),
+        homeTeamName: data.homeTeam || '',
+        awayTeamName: data.awayTeam || '',
+        homeScore: Number(data.homeWins || 0),
+        awayScore: Number(data.awayWins || 0),
+        homeRecord: data.homeRecord || '',
+        awayRecord: data.awayRecord || '',
+        homeLogoPath: data.homeLogoPath || '',
+        awayLogoPath: data.awayLogoPath || '',
+        matchId: data.matchId || `${String(data.league || '').toLowerCase()}-${Date.now()}`,
+      },
+      { outputSize: RESULT_CARD_SIZE }
+    );
+    return fallback.buffer;
+  }
 }
 
 async function renderMvpCard(data) {
   const templatePath = path.join(__dirname, '..', 'templates', 'result-feed', 'mvp.html');
-  const vars = {
-    MVP_NAME: escapeHtml(data.mvpName || 'TBD'),
-    MVP_NAME_SIZE_VW: computeMvpNameSizeVw(data.mvpName || 'TBD'),
-    MVP_LINE1: escapeHtml(data.mvpLine1 || ''),
-    MVP_LINE2: escapeHtml(data.mvpLine2 || ''),
-    MVP_SCORE: escapeHtml(data.mvpScore ?? 0),
-    MVP_ACCENT_COLOR: escapeHtml(data.mvpAccentColor || '#e5e7eb'),
-    MVP_LEFT_ACCENT_COLOR: escapeHtml(data.mvpLeftAccentColor || 'transparent'),
-    LEAGUE_LOGO: buildLeagueLogoMarkup(data.leagueLogoPath, { league: data.league, cardType: 'mvp' }),
-  };
+  try {
+    const vars = {
+      MVP_NAME: escapeHtml(data.mvpName || 'TBD'),
+      MVP_NAME_SIZE_VW: computeMvpNameSizeVw(data.mvpName || 'TBD'),
+      MVP_LINE1: escapeHtml(data.mvpLine1 || ''),
+      MVP_LINE2: escapeHtml(data.mvpLine2 || ''),
+      MVP_SCORE: escapeHtml(data.mvpScore ?? 0),
+      MVP_ACCENT_COLOR: escapeHtml(data.mvpAccentColor || '#e5e7eb'),
+      MVP_LEFT_ACCENT_COLOR: escapeHtml(data.mvpLeftAccentColor || 'transparent'),
+      LEAGUE_LOGO: buildLeagueLogoMarkup(data.leagueLogoPath, { league: data.league, cardType: 'mvp' }),
+    };
 
-  return renderTemplateToPng(templatePath, vars, MVP_CARD_SIZE);
+    return await renderTemplateToPng(templatePath, vars, MVP_CARD_SIZE);
+  } catch (_) {
+    const fallback = await mvpCard(
+      {
+        title: 'MVP',
+        playerName: data.mvpName || 'TBD',
+        statsLine1: data.mvpLine1 || '',
+        statsLine2: data.mvpLine2 || '',
+        totalScore: String(data.mvpScore ?? 0),
+        accentColor: data.mvpAccentColor || '#e5e7eb',
+        matchId: data.matchId || `${String(data.league || '').toLowerCase()}-${Date.now()}`,
+      },
+      { outputSize: MVP_CARD_SIZE }
+    );
+    return fallback.buffer;
+  }
 }
 
 module.exports = {
