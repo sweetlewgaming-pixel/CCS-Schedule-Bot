@@ -342,15 +342,10 @@ function createSessionToken() {
 
 function cleanupPreviewSessions() {
   const now = Date.now();
-  let changed = false;
   for (const [token, session] of previewSessions.entries()) {
     if (now - Number(session?.createdAt || 0) > PREVIEW_SESSION_TTL_MS) {
       previewSessions.delete(token);
-      changed = true;
     }
-  }
-  if (changed) {
-    savePreviewSessions();
   }
 }
 
@@ -367,7 +362,16 @@ function createPreviewSession(payload) {
 
 function getPreviewSession(token) {
   cleanupPreviewSessions();
-  return previewSessions.get(token) || null;
+  let session = previewSessions.get(token) || null;
+  if (session) {
+    return session;
+  }
+
+  // Support multi-process/runtime restarts by lazily reloading state from disk.
+  loadPreviewSessions();
+  cleanupPreviewSessions();
+  session = previewSessions.get(token) || null;
+  return session;
 }
 
 function parsePreviewButtonId(customId) {
