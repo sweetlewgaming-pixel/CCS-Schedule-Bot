@@ -28,7 +28,7 @@ const { slugifyTeamName } = require('../utils/slugify');
 const LEAGUES = ['CCS', 'CPL', 'CAS', 'CNL'];
 const LEAGUE_OPTION_ALL = 'ALL';
 const POST_GAP_MS = 3200;
-const PREVIEW_POST_GAP_MS = 1200;
+const PREVIEW_POST_GAP_MS = Math.max(0, Number(process.env.PREVIEW_POST_GAP_MS || 250) || 250);
 const ACTIVE_RENDER_BACKEND = String(process.env.RENDER_BACKEND || 'html').trim().toLowerCase();
 const MATCH_AUTOCOMPLETE_CACHE_MS = 30_000;
 const matchAutocompleteCache = new Map();
@@ -854,33 +854,34 @@ module.exports = {
           const selectedMvp = uniqueCandidates.find((candidate) => candidate.id === selectedMvpId) || uniqueCandidates[0];
 
           try {
-            resultPng = await renderResultCard({
-              league,
-              leagueLabel: LEAGUE_DISPLAY_NAMES[league] || league,
-              week: match.week,
-              // Template places away on left and home on right; map winner -> left.
-              homeTeam: loserTeam,
-              awayTeam: winnerTeam,
-              homeWins: loserWins,
-              awayWins: winnerWins,
-              homeRecord: loserRecord,
-              awayRecord: winnerRecord,
-              homeLogoPath: loserLogoPath,
-              awayLogoPath: winnerLogoPath,
-              resultAccentColor: winnerColor,
-              leagueLogoPath,
-            });
-
-            mvpPng = await renderMvpCard({
-              league,
-              mvpName: selectedMvp.name,
-              mvpLine1: buildMvpLine1(selectedMvp),
-              mvpLine2: buildMvpLine2(selectedMvp),
-              mvpScore: selectedMvp.score,
-              mvpAccentColor: resolveTeamColor(selectedMvp.teamName) || '#e5e7eb',
-              mvpLeftAccentColor: winnerColor,
-              leagueLogoPath,
-            });
+            [resultPng, mvpPng] = await Promise.all([
+              renderResultCard({
+                league,
+                leagueLabel: LEAGUE_DISPLAY_NAMES[league] || league,
+                week: match.week,
+                // Template places away on left and home on right; map winner -> left.
+                homeTeam: loserTeam,
+                awayTeam: winnerTeam,
+                homeWins: loserWins,
+                awayWins: winnerWins,
+                homeRecord: loserRecord,
+                awayRecord: winnerRecord,
+                homeLogoPath: loserLogoPath,
+                awayLogoPath: winnerLogoPath,
+                resultAccentColor: winnerColor,
+                leagueLogoPath,
+              }),
+              renderMvpCard({
+                league,
+                mvpName: selectedMvp.name,
+                mvpLine1: buildMvpLine1(selectedMvp),
+                mvpLine2: buildMvpLine2(selectedMvp),
+                mvpScore: selectedMvp.score,
+                mvpAccentColor: resolveTeamColor(selectedMvp.teamName) || '#e5e7eb',
+                mvpLeftAccentColor: winnerColor,
+                leagueLogoPath,
+              }),
+            ]);
           } catch (error) {
             skipped.push(`match_id ${match.matchId}: card rendering failed (${error.message})`);
             continue;
