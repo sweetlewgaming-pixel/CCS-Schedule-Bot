@@ -330,9 +330,10 @@ async function renderResultCard(data) {
   const templatePath = path.join(__dirname, '..', 'templates', 'result-feed', 'result.html');
   const homeLogoDataUrl = await ensureNormalizedLogoDataUrl(data.homeLogoPath);
   const awayLogoDataUrl = await ensureNormalizedLogoDataUrl(data.awayLogoPath);
+  const leagueLabel = String(data.leagueLabel || data.league || '').replace(/amatuer/gi, 'amateur');
   const vars = {
     EMBEDDED_FONT_CSS: buildEmbeddedFontCss(),
-    LEAGUE: escapeHtml(data.leagueLabel || data.league || ''),
+    LEAGUE: escapeHtml(leagueLabel),
     WEEK: escapeHtml(data.week || ''),
     HOME_TEAM: escapeHtml(data.homeTeam || ''),
     AWAY_TEAM: escapeHtml(data.awayTeam || ''),
