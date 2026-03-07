@@ -18,8 +18,6 @@ const {
   getInputStatsRows,
   extractMatchStatsFromInputRows,
 } = require('../services/googleSheets');
-const { fetchBallchasingGroup } = require('../services/ballchasing');
-const { buildMatchSummary } = require('../services/resultSummary');
 const { resolveLeagueLogoPath, resolveTeamLogoPath } = require('../services/logoResolver');
 const { renderResultCard, renderMvpCard } = require('../services/resultCardRenderer');
 const { resolveTeamColor } = require('../services/teamColors');
@@ -194,10 +192,6 @@ function isValidHttpUrl(value) {
   }
 }
 
-function isLikelyBallchasingGroupLink(value) {
-  return /^https?:\/\/(?:www\.)?ballchasing\.com\/group\/[A-Za-z0-9_-]+(?:[/?].*)?$/i.test(String(value || '').trim());
-}
-
 function toRecordText(record) {
   if (!record || !Number.isFinite(record.wins) || !Number.isFinite(record.losses)) {
     return '';
@@ -280,47 +274,6 @@ function buildMvpCandidatesFromInputRows(inputRows, match) {
       })
     )
     .sort((a, b) => b.score - a.score);
-}
-
-function buildMvpCandidatesFromBallchasing(groupData, match) {
-  const players = Array.isArray(groupData?.players) ? groupData.players : [];
-  const homeTeam = String(match?.homeTeam || '').trim();
-  const awayTeam = String(match?.awayTeam || '').trim();
-  const scopedPlayers = players.filter((player) => {
-    const teamName = String(player?.team || '').trim();
-    if (!teamName) {
-      return false;
-    }
-    return teamsLikelyMatch(teamName, homeTeam) || teamsLikelyMatch(teamName, awayTeam);
-  });
-
-  const withIdentity = scopedPlayers.map((player) => {
-    const name = String(player?.name || '').trim();
-    const teamName = String(player?.team || '').trim();
-    const score = Number(player?.cumulative?.core?.score ?? player?.cumulative?.score ?? player?.score ?? 0) || 0;
-    return toMvpCandidate({
-      id: `bc:${normalizeTeamKey(teamName)}:${name.toLowerCase()}`,
-      name,
-      teamName,
-      goals: Number(player?.cumulative?.core?.goals ?? 0) || 0,
-      assists: Number(player?.cumulative?.core?.assists ?? 0) || 0,
-      saves: Number(player?.cumulative?.core?.saves ?? 0) || 0,
-      shots: Number(player?.cumulative?.core?.shots ?? 0) || 0,
-      score,
-    });
-  });
-
-  const deduped = [];
-  const seen = new Set();
-  for (const candidate of withIdentity.sort((a, b) => b.score - a.score)) {
-    const key = `${normalizeTeamKey(candidate.teamName)}|${candidate.name.toLowerCase()}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    deduped.push(candidate);
-  }
-  return deduped;
 }
 
 function createSessionToken() {
@@ -711,8 +664,6 @@ module.exports = {
         const skipped = [];
         const warnings = [];
         let usedInputStatsCount = 0;
-        let usedBallchasingFallbackCount = 0;
-        let usedBallchasingCandidatesCount = 0;
         let inputStatsRows = { playerRows: [], teamRows: [] };
         let standingsMap = new Map();
         try {
@@ -727,35 +678,12 @@ module.exports = {
         }
 
         for (const match of matches) {
-          const ballchasingLink = String(match.ballchasingLink || '').trim();
-          if (!isLikelyBallchasingGroupLink(ballchasingLink)) {
-            skipped.push(`match_id ${match.matchId}: missing/invalid Ballchasing group link`);
-            continue;
-          }
-
-          let groupData = null;
           let summary = extractMatchStatsFromInputRows(inputStatsRows, match);
           if (!summary) {
-            let group;
-            try {
-              group = await fetchBallchasingGroup(ballchasingLink);
-            } catch (error) {
-              skipped.push(`match_id ${match.matchId}: Ballchasing fetch failed (${error.message})`);
-              continue;
-            }
-            groupData = group?.data || null;
-            summary = buildMatchSummary(group.data, match.homeTeam, match.awayTeam);
-            warnings.push(`match_id ${match.matchId}: used Ballchasing stats fallback (PlayerInput/TeamInput incomplete).`);
-            usedBallchasingFallbackCount += 1;
-          } else {
-            usedInputStatsCount += 1;
-            try {
-              const group = await fetchBallchasingGroup(ballchasingLink);
-              groupData = group?.data || null;
-            } catch (error) {
-              warnings.push(`match_id ${match.matchId}: Ballchasing candidates unavailable (${error.message}).`);
-            }
+            skipped.push(`match_id ${match.matchId}: missing sheet stats in PlayerInput/TeamInput`);
+            continue;
           }
+          usedInputStatsCount += 1;
 
           const homeWins = Number(summary.homeWins || 0);
           const awayWins = Number(summary.awayWins || 0);
@@ -792,11 +720,7 @@ module.exports = {
           const winnerLogoPath = homeWon ? homeLogoPath : awayLogoPath;
           const loserLogoPath = homeWon ? awayLogoPath : homeLogoPath;
           const winnerColor = resolveTeamColor(winnerTeam) || '#e5e7eb';
-          let mvpCandidates =
-            buildMvpCandidatesFromBallchasing(groupData, match).concat(buildMvpCandidatesFromInputRows(inputStatsRows, match));
-          if (groupData) {
-            usedBallchasingCandidatesCount += 1;
-          }
+          let mvpCandidates = buildMvpCandidatesFromInputRows(inputStatsRows, match);
           if (!mvpCandidates.length) {
             mvpCandidates = [
               toMvpCandidate({
@@ -905,11 +829,8 @@ module.exports = {
           previewEntry.controlMessageId = controlMessage.id;
           await sleep(PREVIEW_POST_GAP_MS);
 
-          if (summary.matchedTeams && (!summary.matchedTeams.home || !summary.matchedTeams.away)) {
-            warnings.push(`match_id ${match.matchId}: Ballchasing team-name matching was partial.`);
-          }
           if (displayRecords.adjusted) {
-            warnings.push(`match_id ${match.matchId}: display record was adjusted from standings based on Ballchasing result.`);
+            warnings.push(`match_id ${match.matchId}: display record was adjusted from standings based on sheet result.`);
           }
 
           previewed.push(match.matchId);
@@ -918,7 +839,7 @@ module.exports = {
         const lines = [
           `Week preview finished for ${league} Week ${week} in #${previewChannel.name} (target #${targetChannel.name}).`,
           `Renderer: ${ACTIVE_RENDER_BACKEND}`,
-          `Stats source: input=${usedInputStatsCount}, ballchasing_fallback=${usedBallchasingFallbackCount}, ballchasing_candidates=${usedBallchasingCandidatesCount}`,
+          `Stats source: input=${usedInputStatsCount}`,
           `Previewed: ${previewed.length}`,
           `Skipped: ${skipped.length}`,
         ];
