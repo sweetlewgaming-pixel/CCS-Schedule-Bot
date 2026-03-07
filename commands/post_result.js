@@ -40,6 +40,10 @@ const PREVIEW_CHANNEL_NAME = 'feed-preview';
 const PREVIEW_CHANNEL_ENV = 'RESULT_FEED_PREVIEW_CHANNEL';
 const previewSessions = new Map();
 const PREVIEW_STATE_PATH = path.join(__dirname, '..', 'data', 'post-result-preview-sessions.json');
+const SHEET_CACHE_TTL_MS = Math.max(0, Number(process.env.POST_RESULT_SHEET_CACHE_TTL_MS || 120000) || 120000);
+const matchesByWeekCache = new Map();
+const standingsCache = new Map();
+const inputStatsCache = new Map();
 const LEAGUE_DISPLAY_NAMES = {
   CCS: 'CLUTCH COMPETITOR SERIES',
   CPL: 'CLUTCH PROSPECT LEAGUE',
@@ -49,6 +53,25 @@ const LEAGUE_DISPLAY_NAMES = {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function nowMs() {
+  return Date.now();
+}
+
+function getCacheKey(parts) {
+  return parts.map((v) => String(v ?? '')).join('|');
+}
+
+async function readThroughCache(cache, key, loader) {
+  const entry = cache.get(key);
+  const now = nowMs();
+  if (entry && now - Number(entry.ts || 0) < SHEET_CACHE_TTL_MS) {
+    return entry.value;
+  }
+  const value = await loader();
+  cache.set(key, { ts: now, value });
+  return value;
 }
 
 function getFeedChannelConfig(league) {
@@ -563,7 +586,9 @@ async function getMatchesForAutocomplete(league, week) {
     return cached.matches;
   }
 
-  const matches = await getMatchesByWeekDetailed(league, String(week));
+  const matches = await readThroughCache(matchesByWeekCache, getCacheKey([league, week]), () =>
+    getMatchesByWeekDetailed(league, String(week))
+  );
   matchAutocompleteCache.set(key, { ts: now, matches });
   return matches;
 }
@@ -750,6 +775,7 @@ module.exports = {
       const week = interaction.options.getInteger('week', true);
       const matchIdFilter = String(interaction.options.getString('match_id') || '').trim();
       const leaguesToRun = selectedLeague === LEAGUE_OPTION_ALL ? LEAGUES : [selectedLeague];
+      const commandStartMs = nowMs();
       const summaryBlocks = [];
       const previewChannel = await resolvePreviewChannel(interaction.guild, null);
       if (!previewChannel) {
@@ -770,7 +796,12 @@ module.exports = {
       }
 
       for (const league of leaguesToRun) {
-        let matches = await getMatchesByWeekDetailed(league, String(week));
+        const leagueStartMs = nowMs();
+        const scheduleFetchStartMs = nowMs();
+        let matches = await readThroughCache(matchesByWeekCache, getCacheKey([league, week]), () =>
+          getMatchesByWeekDetailed(league, String(week))
+        );
+        const scheduleFetchMs = nowMs() - scheduleFetchStartMs;
         if (matchIdFilter) {
           const wanted = matchIdFilter.toLowerCase();
           matches = matches.filter((m) => String(m.matchId || '').toLowerCase() === wanted);
@@ -801,18 +832,23 @@ module.exports = {
         let usedInputStatsCount = 0;
         let inputStatsRows = { playerRows: [], teamRows: [] };
         let standingsMap = new Map();
+        const standingsFetchStartMs = nowMs();
         try {
-          standingsMap = await getOverallStandingsRecords(league);
+          standingsMap = await readThroughCache(standingsCache, getCacheKey([league]), () => getOverallStandingsRecords(league));
         } catch (error) {
           warnings.push(`Could not read ${league} RawStandings overall records: ${error.message}`);
         }
+        const standingsFetchMs = nowMs() - standingsFetchStartMs;
+        const inputFetchStartMs = nowMs();
         try {
-          inputStatsRows = await getInputStatsRows(league);
+          inputStatsRows = await readThroughCache(inputStatsCache, getCacheKey([league]), () => getInputStatsRows(league));
         } catch (error) {
           warnings.push(`Could not read ${league} PlayerInput/TeamInput rows: ${error.message}`);
         }
+        const inputFetchMs = nowMs() - inputFetchStartMs;
 
         for (const match of matches) {
+          const matchStartMs = nowMs();
           let summary = extractMatchStatsFromInputRows(inputStatsRows, match);
           if (!summary) {
             skipped.push(`match_id ${match.matchId}: missing sheet stats in PlayerInput/TeamInput`);
@@ -885,6 +921,7 @@ module.exports = {
           const selectedMvp = uniqueCandidates.find((candidate) => candidate.id === selectedMvpId) || uniqueCandidates[0];
 
           try {
+            const renderStartMs = nowMs();
             [resultPng, mvpPng] = await Promise.all([
               renderResultCard({
                 league,
@@ -913,6 +950,9 @@ module.exports = {
                 leagueLogoPath,
               }),
             ]);
+            console.log(
+              `[post_result] league=${league} week=${week} match_id=${match.matchId} stage=render ms=${nowMs() - renderStartMs}`
+            );
           } catch (error) {
             skipped.push(`match_id ${match.matchId}: card rendering failed (${error.message})`);
             continue;
@@ -948,6 +988,7 @@ module.exports = {
           let resultMessage;
           let controlMessage;
           try {
+            const sendStartMs = nowMs();
             resultMessage = await previewChannel.send({
               content: `[PREVIEW] ${messageContent}\nTarget: <#${targetChannel.id}>`,
               files: [new AttachmentBuilder(resultPng, { name: `${league}-${match.matchId}-result.png` })],
@@ -957,6 +998,9 @@ module.exports = {
               files: [new AttachmentBuilder(mvpPng, { name: `${league}-${match.matchId}-mvp.png` })],
               components: buildPreviewControls(previewSessionToken, previewEntry, previewIndex, false),
             });
+            console.log(
+              `[post_result] league=${league} week=${week} match_id=${match.matchId} stage=discord_send ms=${nowMs() - sendStartMs}`
+            );
           } catch (error) {
             previewSession.previews.pop();
             savePreviewSessions();
@@ -973,6 +1017,9 @@ module.exports = {
           }
 
           previewed.push(match.matchId);
+          console.log(
+            `[post_result] league=${league} week=${week} match_id=${match.matchId} stage=total_match ms=${nowMs() - matchStartMs}`
+          );
         }
 
         const lines = [
@@ -988,6 +1035,9 @@ module.exports = {
         if (warnings.length) {
           lines.push(`Warnings:\n- ${warnings.join('\n- ')}`);
         }
+        console.log(
+          `[post_result] league=${league} week=${week} stage=league_summary schedule_fetch_ms=${scheduleFetchMs} standings_fetch_ms=${standingsFetchMs} input_fetch_ms=${inputFetchMs} league_total_ms=${nowMs() - leagueStartMs}`
+        );
         summaryBlocks.push(lines.join('\n'));
       }
 
@@ -999,6 +1049,9 @@ module.exports = {
       await sendLongEphemeralReply(
         interaction,
         `${summaryBlocks.join('\n\n')}\n\nPreview session token: \`${previewSessionToken}\`\nUse the buttons in #${previewChannel.name} to edit MVP and confirm each post.`
+      );
+      console.log(
+        `[post_result] user=${interaction.user.id} league=${selectedLeague} week=${week} match_id=${matchIdFilter || 'all'} total_ms=${nowMs() - commandStartMs}`
       );
     } catch (error) {
       const message = `post_result failed: ${error?.message || 'Unknown error'}`;

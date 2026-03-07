@@ -6,6 +6,8 @@ const { createCanvas, loadImage } = require('@napi-rs/canvas');
 const RESULT_CARD_SIZE = { width: Number(process.env.RESULT_CARD_WIDTH || 1200), height: Number(process.env.RESULT_CARD_HEIGHT || 675) };
 const MVP_CARD_SIZE = { width: Number(process.env.MVP_CARD_WIDTH || 900), height: Number(process.env.MVP_CARD_HEIGHT || 1200) };
 const RENDER_WAIT_UNTIL = String(process.env.RENDER_WAIT_UNTIL || 'domcontentloaded').trim().toLowerCase();
+const RENDER_TIMEOUT_MS = Math.max(1000, Number(process.env.RENDER_TIMEOUT_MS || 15000) || 15000);
+const RENDER_MAX_ATTEMPTS = Math.max(1, Number(process.env.RENDER_MAX_ATTEMPTS || 2) || 2);
 
 let browserPromise = null;
 const logoDataUrlCache = new Map();
@@ -232,17 +234,50 @@ async function getBrowser() {
   return browserPromise;
 }
 
+async function prewarmRenderer() {
+  const browser = await getBrowser();
+  const page = await browser.newPage({ viewport: { width: 8, height: 8 } });
+  await page.setContent('<!doctype html><html><body></body></html>', { waitUntil: 'domcontentloaded' });
+  await page.close();
+}
+
 async function renderTemplateToPng(templatePath, variables, size) {
   const template = fs.readFileSync(templatePath, 'utf8');
   const html = applyVariables(template, variables);
 
   const browser = await getBrowser();
   const page = await browser.newPage({ viewport: { width: size.width, height: size.height } });
-  // Templates are self-contained (embedded fonts/logos), so waiting for network idle is unnecessary.
-  await page.setContent(html, { waitUntil: RENDER_WAIT_UNTIL });
-  const png = await page.screenshot({ type: 'png' });
-  await page.close();
-  return png;
+  try {
+    // Templates are self-contained (embedded fonts/logos), so waiting for network idle is unnecessary.
+    await Promise.race([
+      page.setContent(html, { waitUntil: RENDER_WAIT_UNTIL }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`render timeout after ${RENDER_TIMEOUT_MS}ms at setContent`)), RENDER_TIMEOUT_MS)
+      ),
+    ]);
+    const png = await Promise.race([
+      page.screenshot({ type: 'png' }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`render timeout after ${RENDER_TIMEOUT_MS}ms at screenshot`)), RENDER_TIMEOUT_MS)
+      ),
+    ]);
+    return png;
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
+async function renderTemplateToPngWithRetry(templatePath, variables, size) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= RENDER_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await renderTemplateToPng(templatePath, variables, size);
+    } catch (error) {
+      lastError = error;
+      console.error(`[resultCardRenderer] render attempt ${attempt}/${RENDER_MAX_ATTEMPTS} failed: ${error?.message || error}`);
+    }
+  }
+  throw lastError || new Error('render failed');
 }
 
 function getLeagueLogoTuning(league, cardType) {
@@ -311,7 +346,7 @@ async function renderResultCard(data) {
     LEAGUE_LOGO: buildLeagueLogoMarkup(data.leagueLogoPath, { league: data.league, cardType: 'result' }),
   };
 
-  return renderTemplateToPng(templatePath, vars, RESULT_CARD_SIZE);
+  return renderTemplateToPngWithRetry(templatePath, vars, RESULT_CARD_SIZE);
 }
 
 async function renderMvpCard(data) {
@@ -328,10 +363,11 @@ async function renderMvpCard(data) {
     LEAGUE_LOGO: buildLeagueLogoMarkup(data.leagueLogoPath, { league: data.league, cardType: 'mvp' }),
   };
 
-  return renderTemplateToPng(templatePath, vars, MVP_CARD_SIZE);
+  return renderTemplateToPngWithRetry(templatePath, vars, MVP_CARD_SIZE);
 }
 
 module.exports = {
+  prewarmRenderer,
   renderResultCard,
   renderMvpCard,
   RESULT_CARD_SIZE,

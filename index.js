@@ -18,6 +18,7 @@ const availabilityAdminCommand = require('./commands/availability_admin');
 const helpCommand = require('./commands/help');
 const postResultCommand = require('./commands/post_result');
 const { startMatchReminderService } = require('./services/matchReminderService');
+const { prewarmRenderer } = require('./services/resultCardRenderer');
 
 const requiredEnv = ['DISCORD_TOKEN', 'CLIENT_ID', 'GOOGLE_CLIENT_EMAIL', 'GOOGLE_PRIVATE_KEY'];
 const missingEnv = requiredEnv.filter((key) => !process.env[key]);
@@ -91,6 +92,10 @@ client.once(Events.ClientReady, async (readyClient) => {
   } else {
     console.log('Match reminder service disabled via DISABLE_REMINDERS=true');
   }
+
+  prewarmRenderer()
+    .then(() => console.log('Result card renderer prewarmed.'))
+    .catch((error) => console.error('Result card renderer prewarm failed:', error?.message || error));
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
