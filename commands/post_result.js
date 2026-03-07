@@ -1076,11 +1076,32 @@ module.exports = {
 
     preview.confirmed = true;
     savePreviewSessions();
-    await interaction.message.edit({
-      content: buildPreviewControlContent(preview),
-      components: buildPreviewControls(parsed.token, preview, parsed.index, false),
-    });
-    await interaction.editReply(`Posted match_id ${preview.matchId} to <#${preview.targetChannelId}>.`);
+    const previewChannel =
+      interaction.channel && interaction.channel.type === ChannelType.GuildText
+        ? interaction.channel
+        : null;
+
+    if (previewChannel) {
+      try {
+        if (preview.resultMessageId) {
+          const resultMsg = await previewChannel.messages.fetch(preview.resultMessageId).catch(() => null);
+          if (resultMsg) {
+            await resultMsg.delete().catch(() => {});
+          }
+        }
+        if (preview.controlMessageId && preview.controlMessageId !== interaction.message?.id) {
+          const controlMsg = await previewChannel.messages.fetch(preview.controlMessageId).catch(() => null);
+          if (controlMsg) {
+            await controlMsg.delete().catch(() => {});
+          }
+        }
+      } catch (_) {
+        // Ignore preview cleanup failures; final post already succeeded.
+      }
+    }
+
+    await interaction.message.delete().catch(() => {});
+    await interaction.editReply(`Posted match_id ${preview.matchId} to <#${preview.targetChannelId}> and removed its preview posts.`);
   },
 
   async handleSelectMenu(interaction) {
