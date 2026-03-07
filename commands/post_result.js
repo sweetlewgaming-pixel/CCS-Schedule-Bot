@@ -32,7 +32,7 @@ const PREVIEW_POST_GAP_MS = Math.max(0, Number(process.env.PREVIEW_POST_GAP_MS |
 const ACTIVE_RENDER_BACKEND = String(process.env.RENDER_BACKEND || 'html').trim().toLowerCase();
 const MATCH_AUTOCOMPLETE_CACHE_MS = 30_000;
 const matchAutocompleteCache = new Map();
-const PREVIEW_SESSION_TTL_MS = 1000 * 60 * 60 * 6;
+const PREVIEW_SESSION_TTL_MS = 1000 * 60 * 60 * 24;
 const PREVIEW_TOKEN_LENGTH = 10;
 const PREVIEW_BUTTON_PREFIX = 'post_result_preview_btn';
 const PREVIEW_SELECT_PREFIX = 'post_result_preview_mvp';
@@ -43,7 +43,7 @@ const PREVIEW_STATE_PATH = path.join(__dirname, '..', 'data', 'post-result-previ
 const LEAGUE_DISPLAY_NAMES = {
   CCS: 'CLUTCH COMPETITOR SERIES',
   CPL: 'CLUTCH PROSPECT LEAGUE',
-  CAS: 'CLUTCH AMATUER SERIES',
+  CAS: 'CLUTCH AMATEUR SERIES',
   CNL: 'CLUTCH NOVICE LEAGUE',
 };
 
@@ -127,12 +127,23 @@ async function resolvePreviewChannel(guild, fallbackChannel) {
 }
 
 function normalizeWebsiteUrl(match) {
-  const fromSheet = String(match?.websiteLink || '').trim();
+  const ensureHttp = (value) => {
+    const raw = String(value || '').trim();
+    if (!raw) {
+      return '';
+    }
+    if (/^https?:\/\//i.test(raw)) {
+      return raw;
+    }
+    return `https://${raw}`;
+  };
+
+  const fromSheet = ensureHttp(match?.websiteLink);
   const weekRaw = String(match?.week || '').trim();
   const weekNumber = weekRaw.replace(/^week\s*/i, '').trim();
 
   const appendWeekQuery = (url) => {
-    const value = String(url || '').trim();
+    const value = ensureHttp(url);
     if (!value || !weekNumber) {
       return value;
     }
@@ -171,7 +182,7 @@ function normalizeWebsiteUrl(match) {
       .replaceAll('{home_team_slug}', encodeURIComponent(homeTeamSlug))
       .replaceAll('{away_team_slug}', encodeURIComponent(awayTeamSlug))
       .replaceAll('{tier}', encodeURIComponent(tier));
-    return appendWeekQuery(built);
+    return appendWeekQuery(ensureHttp(built));
   }
 
   const baseUrl = String(process.env.WEBSITE_MATCH_BASE_URL || '').trim();
@@ -179,7 +190,7 @@ function normalizeWebsiteUrl(match) {
     return '';
   }
 
-  const core = `${baseUrl.replace(/\/+$/, '')}/${encodeURIComponent(league)}-w${encodeURIComponent(
+  const core = `${ensureHttp(baseUrl).replace(/\/+$/, '')}/${encodeURIComponent(league)}-w${encodeURIComponent(
     weekNumber
   )}-${encodeURIComponent(awayTeamSlug)}-vs-${encodeURIComponent(homeTeamSlug)}`;
   const built = tier ? `${core}?tier=${encodeURIComponent(tier)}` : core;
@@ -311,10 +322,30 @@ function deserializePreviewSession(session) {
 
 function savePreviewSessions() {
   ensurePreviewStateDir();
-  const payload = {};
+  const now = Date.now();
+  let payload = {};
+  try {
+    if (fs.existsSync(PREVIEW_STATE_PATH)) {
+      const existing = JSON.parse(fs.readFileSync(PREVIEW_STATE_PATH, 'utf8'));
+      if (existing && typeof existing === 'object') {
+        payload = existing;
+      }
+    }
+  } catch (_) {
+    payload = {};
+  }
+
   for (const [token, session] of previewSessions.entries()) {
     payload[token] = serializePreviewSession(session);
   }
+
+  for (const [token, session] of Object.entries(payload)) {
+    const createdAt = Number(session?.createdAt || 0);
+    if (!Number.isFinite(createdAt) || now - createdAt > PREVIEW_SESSION_TTL_MS) {
+      delete payload[token];
+    }
+  }
+
   fs.writeFileSync(PREVIEW_STATE_PATH, JSON.stringify(payload, null, 2));
 }
 
@@ -1070,6 +1101,7 @@ module.exports = {
       );
     }
     await targetChannel.send({
+      content: preview.websiteUrl && isValidHttpUrl(preview.websiteUrl) ? preview.websiteUrl : undefined,
       files: [new AttachmentBuilder(preview.mvpPng, { name: `${preview.league}-${preview.matchId}-mvp.png` })],
       components: mvpComponents,
     });
