@@ -40,6 +40,7 @@ const PREVIEW_CHANNEL_NAME = 'feed-preview';
 const PREVIEW_CHANNEL_ENV = 'RESULT_FEED_PREVIEW_CHANNEL';
 const previewSessions = new Map();
 const PREVIEW_STATE_PATH = path.join(__dirname, '..', 'data', 'post-result-preview-sessions.json');
+const PREVIEW_STATE_BACKUP_PATH = `${PREVIEW_STATE_PATH}.bak`;
 const SHEET_CACHE_TTL_MS = Math.max(0, Number(process.env.POST_RESULT_SHEET_CACHE_TTL_MS || 120000) || 120000);
 const matchesByWeekCache = new Map();
 const standingsCache = new Map();
@@ -369,7 +370,24 @@ function savePreviewSessions() {
     }
   }
 
-  fs.writeFileSync(PREVIEW_STATE_PATH, JSON.stringify(payload, null, 2));
+  const tempPath = `${PREVIEW_STATE_PATH}.tmp`;
+  const serialized = JSON.stringify(payload, null, 2);
+  try {
+    if (fs.existsSync(PREVIEW_STATE_PATH)) {
+      fs.copyFileSync(PREVIEW_STATE_PATH, PREVIEW_STATE_BACKUP_PATH);
+    }
+    fs.writeFileSync(tempPath, serialized);
+    fs.renameSync(tempPath, PREVIEW_STATE_PATH);
+  } catch (error) {
+    console.error(`Failed to persist post_result preview sessions: ${error?.message || error}`);
+    try {
+      if (fs.existsSync(tempPath)) {
+        fs.unlinkSync(tempPath);
+      }
+    } catch (_) {
+      // ignore cleanup errors
+    }
+  }
 }
 
 function loadPreviewSessions() {
@@ -385,8 +403,23 @@ function loadPreviewSessions() {
     for (const [token, session] of Object.entries(parsed)) {
       previewSessions.set(token, deserializePreviewSession(session));
     }
-  } catch (_) {
-    // Ignore malformed state and continue with empty in-memory sessions.
+  } catch (error) {
+    console.error(`Failed to load post_result preview sessions from primary file: ${error?.message || error}`);
+    try {
+      if (!fs.existsSync(PREVIEW_STATE_BACKUP_PATH)) {
+        return;
+      }
+      const backupParsed = JSON.parse(fs.readFileSync(PREVIEW_STATE_BACKUP_PATH, 'utf8'));
+      if (!backupParsed || typeof backupParsed !== 'object') {
+        return;
+      }
+      for (const [token, session] of Object.entries(backupParsed)) {
+        previewSessions.set(token, deserializePreviewSession(session));
+      }
+      console.log('Recovered post_result preview sessions from backup file.');
+    } catch (backupError) {
+      console.error(`Failed to load post_result preview sessions backup: ${backupError?.message || backupError}`);
+    }
   }
 }
 
