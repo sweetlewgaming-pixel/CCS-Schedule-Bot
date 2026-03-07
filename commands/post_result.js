@@ -42,6 +42,7 @@ const previewSessions = new Map();
 const PREVIEW_STATE_PATH = path.join(__dirname, '..', 'data', 'post-result-preview-sessions.json');
 const PREVIEW_STATE_BACKUP_PATH = `${PREVIEW_STATE_PATH}.bak`;
 const SHEET_CACHE_TTL_MS = Math.max(0, Number(process.env.POST_RESULT_SHEET_CACHE_TTL_MS || 120000) || 120000);
+const EXTERNAL_STEP_TIMEOUT_MS = Math.max(3000, Number(process.env.POST_RESULT_STEP_TIMEOUT_MS || 20000) || 20000);
 const matchesByWeekCache = new Map();
 const standingsCache = new Map();
 const inputStatsCache = new Map();
@@ -54,6 +55,22 @@ const LEAGUE_DISPLAY_NAMES = {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withTimeout(label, promise, timeoutMs = EXTERNAL_STEP_TIMEOUT_MS) {
+  let timer = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
 }
 
 function nowMs() {
@@ -70,7 +87,7 @@ async function readThroughCache(cache, key, loader) {
   if (entry && now - Number(entry.ts || 0) < SHEET_CACHE_TTL_MS) {
     return entry.value;
   }
-  const value = await loader();
+  const value = await withTimeout(`cache load ${key}`, loader());
   cache.set(key, { ts: now, value });
   return value;
 }
@@ -810,7 +827,10 @@ module.exports = {
       const leaguesToRun = selectedLeague === LEAGUE_OPTION_ALL ? LEAGUES : [selectedLeague];
       const commandStartMs = nowMs();
       const summaryBlocks = [];
-      const previewChannel = await resolvePreviewChannel(interaction.guild, null);
+      const previewChannel = await withTimeout(
+        'resolve preview channel',
+        resolvePreviewChannel(interaction.guild, null)
+      );
       if (!previewChannel) {
         await interaction.editReply(
           `Preview channel not found. Create #${PREVIEW_CHANNEL_NAME} or set ${PREVIEW_CHANNEL_ENV} in .env.`
@@ -846,10 +866,13 @@ module.exports = {
           continue;
         }
 
-        const targetChannel = await resolveFeedChannel(
-          interaction.guild,
-          league,
-          selectedLeague === LEAGUE_OPTION_ALL ? null : interaction.channel
+        const targetChannel = await withTimeout(
+          `resolve target channel ${league}`,
+          resolveFeedChannel(
+            interaction.guild,
+            league,
+            selectedLeague === LEAGUE_OPTION_ALL ? null : interaction.channel
+          )
         );
         if (!targetChannel) {
           summaryBlocks.push(
@@ -1022,15 +1045,21 @@ module.exports = {
           let controlMessage;
           try {
             const sendStartMs = nowMs();
-            resultMessage = await previewChannel.send({
+            resultMessage = await withTimeout(
+              `send preview result ${match.matchId}`,
+              previewChannel.send({
               content: `[PREVIEW] ${messageContent}\nTarget: <#${targetChannel.id}>`,
               files: [new AttachmentBuilder(resultPng, { name: `${league}-${match.matchId}-result.png` })],
-            });
-            controlMessage = await previewChannel.send({
+              })
+            );
+            controlMessage = await withTimeout(
+              `send preview controls ${match.matchId}`,
+              previewChannel.send({
               content: buildPreviewControlContent(previewEntry),
               files: [new AttachmentBuilder(mvpPng, { name: `${league}-${match.matchId}-mvp.png` })],
               components: buildPreviewControls(previewSessionToken, previewEntry, previewIndex, false),
-            });
+              })
+            );
             console.log(
               `[post_result] league=${league} week=${week} match_id=${match.matchId} stage=discord_send ms=${nowMs() - sendStartMs}`
             );
@@ -1166,16 +1195,24 @@ module.exports = {
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const guild = interaction.guild;
-    const targetChannel = guild?.channels?.cache?.get(preview.targetChannelId) || (await guild?.channels?.fetch(preview.targetChannelId).catch(() => null));
+    const targetChannel =
+      guild?.channels?.cache?.get(preview.targetChannelId) ||
+      (await withTimeout(
+        `fetch target channel ${preview.targetChannelId}`,
+        guild?.channels?.fetch(preview.targetChannelId).catch(() => null)
+      ));
     if (!targetChannel || targetChannel.type !== ChannelType.GuildText) {
       await interaction.editReply(`Target channel is missing or invalid for match_id ${preview.matchId}.`);
       return;
     }
 
-    await targetChannel.send({
+    await withTimeout(
+      `send confirmed result ${preview.matchId}`,
+      targetChannel.send({
       content: preview.messageContent,
       files: [new AttachmentBuilder(preview.resultPng, { name: `${preview.league}-${preview.matchId}-result.png` })],
-    });
+      })
+    );
     await sleep(POST_GAP_MS);
 
     const mvpComponents = [];
@@ -1186,11 +1223,14 @@ module.exports = {
         )
       );
     }
-    await targetChannel.send({
+    await withTimeout(
+      `send confirmed mvp ${preview.matchId}`,
+      targetChannel.send({
       content: preview.websiteUrl && isValidHttpUrl(preview.websiteUrl) ? preview.websiteUrl : undefined,
       files: [new AttachmentBuilder(preview.mvpPng, { name: `${preview.league}-${preview.matchId}-mvp.png` })],
       components: mvpComponents,
-    });
+      })
+    );
     await sleep(POST_GAP_MS);
 
     preview.confirmed = true;
