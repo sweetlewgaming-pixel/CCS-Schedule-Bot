@@ -6,8 +6,8 @@ const { createCanvas, loadImage } = require('@napi-rs/canvas');
 const RESULT_CARD_SIZE = { width: Number(process.env.RESULT_CARD_WIDTH || 1200), height: Number(process.env.RESULT_CARD_HEIGHT || 675) };
 const MVP_CARD_SIZE = { width: Number(process.env.MVP_CARD_WIDTH || 900), height: Number(process.env.MVP_CARD_HEIGHT || 1200) };
 const RENDER_WAIT_UNTIL = String(process.env.RENDER_WAIT_UNTIL || 'domcontentloaded').trim().toLowerCase();
-const RENDER_TIMEOUT_MS = Math.max(1000, Number(process.env.RENDER_TIMEOUT_MS || 15000) || 15000);
-const RENDER_MAX_ATTEMPTS = Math.max(1, Number(process.env.RENDER_MAX_ATTEMPTS || 2) || 2);
+const RENDER_TIMEOUT_MS = Math.max(1000, Number(process.env.RENDER_TIMEOUT_MS || 8000) || 8000);
+const RENDER_MAX_ATTEMPTS = Math.max(1, Number(process.env.RENDER_MAX_ATTEMPTS || 1) || 1);
 
 let browserPromise = null;
 const logoDataUrlCache = new Map();
