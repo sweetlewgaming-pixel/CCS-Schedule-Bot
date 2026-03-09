@@ -1227,7 +1227,6 @@ module.exports = {
     await withTimeout(
       `send confirmed mvp ${preview.matchId}`,
       targetChannel.send({
-      content: preview.websiteUrl && isValidHttpUrl(preview.websiteUrl) ? preview.websiteUrl : undefined,
       files: [new AttachmentBuilder(preview.mvpPng, { name: `${preview.league}-${preview.matchId}-mvp.png` })],
       components: mvpComponents,
       })
