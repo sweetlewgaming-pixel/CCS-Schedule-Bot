@@ -10,6 +10,7 @@ module.exports = {
       restart_delay: 2000,
       env: {
         NODE_ENV: 'production',
+        DISABLE_REMINDERS: 'true',
       },
     },
   ],
