@@ -71,6 +71,11 @@ function describeUploadError(error) {
   return error?.message || 'Unknown error';
 }
 
+function isExpiredOrAckedInteractionError(error) {
+  const code = Number(error?.code || error?.rawError?.code || 0);
+  return code === 10062 || code === 40060;
+}
+
 async function resolveReplaySubmissionChannel(guild, league) {
   if (!guild) {
     return null;
@@ -282,7 +287,14 @@ module.exports = {
       return;
     }
 
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    try {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    } catch (error) {
+      if (isExpiredOrAckedInteractionError(error)) {
+        return;
+      }
+      throw error;
+    }
 
     let match;
     try {

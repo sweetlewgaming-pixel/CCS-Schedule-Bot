@@ -98,6 +98,11 @@ client.once(Events.ClientReady, async (readyClient) => {
     .catch((error) => console.error('Result card renderer prewarm failed:', error?.message || error));
 });
 
+function isExpiredOrAckedInteractionError(error) {
+  const code = Number(error?.code || error?.rawError?.code || 0);
+  return code === 10062 || code === 40060;
+}
+
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (interaction.isChatInputCommand()) {
@@ -315,6 +320,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
     }
   } catch (error) {
+    if (isExpiredOrAckedInteractionError(error)) {
+      console.warn(`Ignoring expired/already-acked interaction error (${error.code || 'unknown'}).`);
+      return;
+    }
+
     console.error('Interaction handler error:', error);
     const debugMessage = String(error?.message || 'Unknown error').slice(0, 250);
     const responseText = `Something went wrong while processing that action.\nError: ${debugMessage}`;

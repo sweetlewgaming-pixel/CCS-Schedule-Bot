@@ -18,6 +18,10 @@ const DEFAULT_REMINDER_RULES = [
   { type: 'start', offsetMinutes: 0 },
 ];
 const REMINDER_MATCH_OVERRIDES_RAW = String(process.env.REMINDER_MATCH_OVERRIDES || '').trim();
+const MATCH_CACHE_TTL_MS = Math.max(60 * 1000, Number(process.env.REMINDER_MATCH_CACHE_MS || 3 * 60 * 1000));
+const QUOTA_BACKOFF_MS = Math.max(60 * 1000, Number(process.env.REMINDER_QUOTA_BACKOFF_MS || 2 * 60 * 1000));
+const leagueMatchCache = new Map();
+const leagueQuotaBackoffUntil = new Map();
 
 function normalizeMatchId(value) {
   return String(value || '').trim().toLowerCase();
@@ -257,8 +261,6 @@ async function getUploadCommandMention(guild) {
 }
 
 async function findMatchChannelByMatchId(guild, league, matchId) {
-  await guild.channels.fetch();
-
   const categoryName = String(CATEGORY_NAMES[league] || '').trim().toLowerCase();
   if (!categoryName) {
     return null;
@@ -315,7 +317,6 @@ function normalizeMatchupChannelName(name) {
 }
 
 async function findMatchChannelByTeams(guild, league, homeTeam, awayTeam) {
-  await guild.channels.fetch();
   const categoryName = String(CATEGORY_NAMES[league] || '').trim().toLowerCase();
   if (!categoryName) {
     return null;
@@ -334,6 +335,29 @@ async function findMatchChannelByTeams(guild, league, homeTeam, awayTeam) {
   );
 }
 
+function isQuotaLikeError(error) {
+  const status = Number(error?.code || error?.status || error?.response?.status || 0);
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    status === 429 ||
+    message.includes('quota exceeded') ||
+    message.includes('read requests per minute') ||
+    message.includes('rate limit')
+  );
+}
+
+function getCachedMatchesForLeague(league) {
+  const cached = leagueMatchCache.get(league);
+  if (!cached) {
+    return null;
+  }
+  if (cached.expiresAt <= Date.now()) {
+    leagueMatchCache.delete(league);
+    return null;
+  }
+  return cached.matches;
+}
+
 async function pollMatchReminders(client) {
   const state = loadState();
   const now = getNowInEastern();
@@ -341,17 +365,38 @@ async function pollMatchReminders(client) {
 
   const matchesByLeague = new Map();
   for (const league of LEAGUES) {
-    let matches = [];
+    const backoffUntil = Number(leagueQuotaBackoffUntil.get(league) || 0);
+    if (backoffUntil > Date.now()) {
+      matchesByLeague.set(league, getCachedMatchesForLeague(league) || []);
+      continue;
+    }
+
+    const cachedMatches = getCachedMatchesForLeague(league);
+    if (cachedMatches) {
+      matchesByLeague.set(league, cachedMatches);
+      continue;
+    }
+
+    let fetched = [];
     try {
-      matches = await getScheduledMatches(league);
+      fetched = await getScheduledMatches(league);
+      leagueMatchCache.set(league, {
+        matches: fetched,
+        expiresAt: Date.now() + MATCH_CACHE_TTL_MS,
+      });
+      leagueQuotaBackoffUntil.delete(league);
     } catch (error) {
       console.error(`Reminder poll failed reading ${league} schedule:`, error.message);
-      matches = [];
+      if (isQuotaLikeError(error)) {
+        leagueQuotaBackoffUntil.set(league, Date.now() + QUOTA_BACKOFF_MS);
+      }
+      fetched = getCachedMatchesForLeague(league) || [];
     }
-    matchesByLeague.set(league, matches);
+    matchesByLeague.set(league, fetched);
   }
 
   for (const guild of client.guilds.cache.values()) {
+    await guild.channels.fetch();
     for (const league of LEAGUES) {
       const matches = matchesByLeague.get(league) || [];
       if (!matches.length) {
