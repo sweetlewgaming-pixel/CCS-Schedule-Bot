@@ -1312,20 +1312,32 @@ module.exports = {
       return;
     }
 
+    await interaction.deferUpdate();
+
     preview.selectedMvpId = candidate.id;
-    preview.mvpPng = await renderMvpCard({
-      league: preview.league,
-      mvpName: candidate.name,
-      mvpLine1: buildMvpLine1(candidate),
-      mvpLine2: buildMvpLine2(candidate),
-      mvpScore: candidate.score,
-      mvpAccentColor: resolveTeamColor(candidate.teamName) || '#e5e7eb',
-      mvpLeftAccentColor: preview.winnerColor,
-      leagueLogoPath: preview.leagueLogoPath,
-    });
+    try {
+      preview.mvpPng = await renderMvpCard({
+        league: preview.league,
+        mvpName: candidate.name,
+        mvpLine1: buildMvpLine1(candidate),
+        mvpLine2: buildMvpLine2(candidate),
+        mvpScore: candidate.score,
+        mvpAccentColor: resolveTeamColor(candidate.teamName) || '#e5e7eb',
+        mvpLeftAccentColor: preview.winnerColor,
+        leagueLogoPath: preview.leagueLogoPath,
+      });
+    } catch (error) {
+      await interaction
+        .followUp({
+          content: `MVP preview render failed: ${error?.message || 'Unknown error'}`,
+          flags: MessageFlags.Ephemeral,
+        })
+        .catch(() => {});
+      return;
+    }
     savePreviewSessions();
 
-    await interaction.update({
+    await interaction.editReply({
       content: buildPreviewControlContent(preview),
       files: [new AttachmentBuilder(preview.mvpPng, { name: `${preview.league}-${preview.matchId}-mvp.png` })],
       components: buildPreviewControls(parsed.token, preview, parsed.index, false),
