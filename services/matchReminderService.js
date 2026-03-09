@@ -13,15 +13,17 @@ const REMINDER_GRACE_MINUTES = 2;
 const STATE_PATH = path.join(__dirname, '..', 'data', 'reminder-state.json');
 const REMINDER_TIME_MODE = String(process.env.REMINDER_TIME_MODE || 'PM').trim().toUpperCase();
 const DEFAULT_REMINDER_RULES = [
-  { type: 'h12', offsetMinutes: 12 * 60 },
-  { type: 'm30', offsetMinutes: 30 },
+  { type: 'h2', offsetMinutes: 2 * 60 },
   { type: 'start', offsetMinutes: 0 },
 ];
 const REMINDER_MATCH_OVERRIDES_RAW = String(process.env.REMINDER_MATCH_OVERRIDES || '').trim();
 const MATCH_CACHE_TTL_MS = Math.max(60 * 1000, Number(process.env.REMINDER_MATCH_CACHE_MS || 3 * 60 * 1000));
 const QUOTA_BACKOFF_MS = Math.max(60 * 1000, Number(process.env.REMINDER_QUOTA_BACKOFF_MS || 2 * 60 * 1000));
+const QUEUE_REFRESH_MS = Math.max(60 * 1000, Number(process.env.REMINDER_QUEUE_REFRESH_MS || 10 * 60 * 1000));
 const leagueMatchCache = new Map();
 const leagueQuotaBackoffUntil = new Map();
+let reminderQueue = [];
+let reminderQueueRefreshAt = 0;
 
 function normalizeMatchId(value) {
   return String(value || '').trim().toLowerCase();
@@ -189,12 +191,10 @@ function minutesFromEstParts(parts) {
   return toDayIndex(parts.year, parts.month, parts.day) * 1440 + parts.hour * 60 + parts.minute;
 }
 
-function minutesUntilMatch(nowParts, parsedMatchTime) {
-  const nowTotal = minutesFromEstParts(nowParts);
-  const matchTotal = toDayIndex(nowParts.year, parsedMatchTime.month, parsedMatchTime.day) * 1440 +
+function minutesForMatchInCurrentYear(nowParts, parsedMatchTime) {
+  return toDayIndex(nowParts.year, parsedMatchTime.month, parsedMatchTime.day) * 1440 +
     parsedMatchTime.hour * 60 +
     parsedMatchTime.minute;
-  return matchTotal - nowTotal;
 }
 
 function hasMatchBeenPlayed(match) {
@@ -358,11 +358,7 @@ function getCachedMatchesForLeague(league) {
   return cached.matches;
 }
 
-async function pollMatchReminders(client) {
-  const state = loadState();
-  const now = getNowInEastern();
-  let stateChanged = false;
-
+async function fetchMatchesByLeague() {
   const matchesByLeague = new Map();
   for (const league of LEAGUES) {
     const backoffUntil = Number(leagueQuotaBackoffUntil.get(league) || 0);
@@ -392,92 +388,134 @@ async function pollMatchReminders(client) {
       }
       fetched = getCachedMatchesForLeague(league) || [];
     }
+
     matchesByLeague.set(league, fetched);
   }
 
-  for (const guild of client.guilds.cache.values()) {
-    await guild.channels.fetch();
-    for (const league of LEAGUES) {
-      const matches = matchesByLeague.get(league) || [];
-      if (!matches.length) {
+  return matchesByLeague;
+}
+
+function buildReminderQueue(nowParts, matchesByLeague) {
+  const nowTotal = minutesFromEstParts(nowParts);
+  const queue = [];
+
+  for (const league of LEAGUES) {
+    const matches = matchesByLeague.get(league) || [];
+    for (const match of matches) {
+      if (hasMatchBeenPlayed(match)) {
         continue;
       }
 
-      for (const match of matches) {
-        if (hasMatchBeenPlayed(match)) {
+      const parsed = parseDateAndTimeEST(match.date, match.time);
+      if (!parsed) {
+        continue;
+      }
+
+      const matchTotal = minutesForMatchInCurrentYear(nowParts, parsed);
+      const reminderRules = getReminderRulesForMatch(match);
+      for (const rule of reminderRules) {
+        const triggerTotal = matchTotal - rule.offsetMinutes;
+        if (triggerTotal < nowTotal - REMINDER_GRACE_MINUTES) {
           continue;
         }
 
-        const parsed = parseDateAndTimeEST(match.date, match.time);
-        if (!parsed) {
-          continue;
-        }
-
-        const minutesUntil = minutesUntilMatch(now, parsed);
-        const reminderRules = getReminderRulesForMatch(match);
-        const earliestReminderWindow = Math.min(
-          ...reminderRules.map((rule) => rule.offsetMinutes - REMINDER_GRACE_MINUTES)
-        );
-        if (minutesUntil < earliestReminderWindow) {
-          continue;
-        }
-
-        let channel = await findMatchChannelByMatchId(guild, league, match.matchId);
-        if (!channel) {
-          channel = await findMatchChannelByTeams(guild, league, match.homeTeam, match.awayTeam);
-        }
-        if (!channel) {
-          console.log(
-            `Reminder skip: channel not found for ${league} ${match.matchId} (${match.awayTeam} at ${match.homeTeam})`
-          );
-          continue;
-        }
-
-        const mentionAData = await mentionForTeam(guild, match.awayTeam);
-        const mentionBData = await mentionForTeam(guild, match.homeTeam);
-        const mentionA = mentionAData.mention;
-        const mentionB = mentionBData.mention;
-        const roleMentions = [mentionAData.roleId, mentionBData.roleId].filter(Boolean);
-        const formattedTime = formatTimePmEst(match.time);
-
-        for (const rule of reminderRules) {
-          const upperBound = rule.offsetMinutes;
-          const lowerBound = rule.offsetMinutes - REMINDER_GRACE_MINUTES;
-          if (!(minutesUntil <= upperBound && minutesUntil >= lowerBound)) {
-            continue;
-          }
-
-          const key = buildReminderKey(now.year, league, match, rule.type);
-          if (state.posted[key]) {
-            continue;
-          }
-
-          let message = '';
-          if (rule.offsetMinutes > 0) {
-            const customOverride = getMatchReminderMessageOverride(match, rule.type, formattedTime);
-            if (customOverride) {
-              message = `${mentionA} ${mentionB} ${customOverride}`;
-            } else {
-              message = `${mentionA} ${mentionB} Reminder: you have a match today at ${formattedTime}.`;
-            }
-          } else {
-            const uploadCommandMention = await getUploadCommandMention(guild);
-            message = `${mentionA} ${mentionB} Match time is now: ${formattedTime}. Good luck! **Please use ${uploadCommandMention} in this channel to post your ballchasing link when you have finished the match.**`;
-          }
-
-          await channel.send({
-            content: message,
-            allowedMentions: {
-              parse: ['users'],
-              roles: roleMentions,
-            },
-          });
-          state.posted[key] = Date.now();
-          stateChanged = true;
-        }
+        queue.push({
+          league,
+          match,
+          rule,
+          triggerTotal,
+        });
       }
     }
   }
+
+  queue.sort((a, b) => a.triggerTotal - b.triggerTotal);
+  return queue;
+}
+
+async function refreshReminderQueueIfNeeded(nowParts, force = false) {
+  if (!force && Date.now() < reminderQueueRefreshAt && reminderQueue.length) {
+    return;
+  }
+
+  const matchesByLeague = await fetchMatchesByLeague();
+  reminderQueue = buildReminderQueue(nowParts, matchesByLeague);
+  reminderQueueRefreshAt = Date.now() + QUEUE_REFRESH_MS;
+}
+
+async function postQueuedReminderForGuild(guild, queueItem, nowYear, state) {
+  const { league, match, rule } = queueItem;
+  const key = buildReminderKey(nowYear, league, match, rule.type);
+  if (state.posted[key]) {
+    return false;
+  }
+
+  let channel = await findMatchChannelByMatchId(guild, league, match.matchId);
+  if (!channel) {
+    channel = await findMatchChannelByTeams(guild, league, match.homeTeam, match.awayTeam);
+  }
+  if (!channel) {
+    console.log(`Reminder skip: channel not found for ${league} ${match.matchId} (${match.awayTeam} at ${match.homeTeam})`);
+    return false;
+  }
+
+  const mentionAData = await mentionForTeam(guild, match.awayTeam);
+  const mentionBData = await mentionForTeam(guild, match.homeTeam);
+  const mentionA = mentionAData.mention;
+  const mentionB = mentionBData.mention;
+  const roleMentions = [mentionAData.roleId, mentionBData.roleId].filter(Boolean);
+  const formattedTime = formatTimePmEst(match.time);
+
+  let message = '';
+  if (rule.offsetMinutes > 0) {
+    const customOverride = getMatchReminderMessageOverride(match, rule.type, formattedTime);
+    if (customOverride) {
+      message = `${mentionA} ${mentionB} ${customOverride}`;
+    } else {
+      message = `${mentionA} ${mentionB} Reminder: you have a match today at ${formattedTime}.`;
+    }
+  } else {
+    const uploadCommandMention = await getUploadCommandMention(guild);
+    message = `${mentionA} ${mentionB} Match time is now: ${formattedTime}. Good luck! **Please use ${uploadCommandMention} in this channel to post your ballchasing link when you have finished the match.**`;
+  }
+
+  await channel.send({
+    content: message,
+    allowedMentions: {
+      parse: ['users'],
+      roles: roleMentions,
+    },
+  });
+
+  state.posted[key] = Date.now();
+  return true;
+}
+
+async function pollMatchReminders(client) {
+  const state = loadState();
+  const now = getNowInEastern();
+  const nowTotal = minutesFromEstParts(now);
+  let stateChanged = false;
+
+  await refreshReminderQueueIfNeeded(now, reminderQueue.length === 0);
+
+  for (const guild of client.guilds.cache.values()) {
+    await guild.channels.fetch();
+    for (const queueItem of reminderQueue) {
+      if (queueItem.triggerTotal > nowTotal) {
+        break;
+      }
+      if (queueItem.triggerTotal < nowTotal - REMINDER_GRACE_MINUTES) {
+        continue;
+      }
+      const sent = await postQueuedReminderForGuild(guild, queueItem, now.year, state);
+      if (sent) {
+        stateChanged = true;
+      }
+    }
+  }
+
+  reminderQueue = reminderQueue.filter((queueItem) => queueItem.triggerTotal > nowTotal);
 
   if (stateChanged) {
     saveState(state);
