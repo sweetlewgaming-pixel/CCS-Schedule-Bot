@@ -296,6 +296,8 @@ module.exports = {
       return;
     }
 
+    await interaction.deferReply();
+
     const day = parsedDay ? parsedDay.label : WEEKDAY_LABELS[parsedDate.weekday];
     const proposedDate = parsedDay ? getNextDateForWeekday(parsedDay.index) : parsedDate.date;
 
@@ -337,7 +339,7 @@ module.exports = {
     }
 
     const allowedRoleMentions = [roleAId, roleBId].filter(Boolean);
-    await interaction.reply({
+    await interaction.editReply({
       content: lines.join('\n'),
       components: scheduleComponents,
       allowedMentions: {
@@ -409,6 +411,7 @@ module.exports = {
       const proposedDate = String(pending.proposedDate || pending.day || '').trim();
       const proposedTime = String(pending.time || '').trim();
       if (validateDate(proposedDate) && validateTime(proposedTime)) {
+        await interaction.deferUpdate();
         try {
           const updateResult = await scheduleMatchById(interaction, {
             league: pending.league,
@@ -422,7 +425,7 @@ module.exports = {
           if (updateResult.duplicate) {
             const existingDate = updateResult.existingDate ? ` (${updateResult.existingDate})` : '';
             const existingTime = updateResult.existingTime ? ` (${updateResult.existingTime})` : '';
-            await interaction.update({
+            await interaction.editReply({
               content:
                 `This match is already scheduled${existingDate || existingTime ? ` [current date${existingDate} time${existingTime}]` : ''}. ` +
                 'Use /reschedule if you need to change it.',
@@ -432,13 +435,13 @@ module.exports = {
           }
 
           pendingProposalSchedules.delete(confirmParsed.token);
-          await interaction.update({
+          await interaction.editReply({
             content: '✅ Match scheduled from proposal successfully.',
             components: [],
           });
         } catch (error) {
           if (error?.code === 403 || error?.response?.status === 403) {
-            await interaction.update({
+            await interaction.editReply({
               content:
                 'Google Sheets update failed: service account lacks edit permission on this league sheet. Share the spreadsheet with GOOGLE_CLIENT_EMAIL as Editor.',
               components: [],
@@ -545,6 +548,8 @@ module.exports = {
       return;
     }
 
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
     try {
       const updateResult = await scheduleMatchById(interaction, {
         league: pending.league,
@@ -558,26 +563,23 @@ module.exports = {
       if (updateResult.duplicate) {
         const existingDate = updateResult.existingDate ? ` (${updateResult.existingDate})` : '';
         const existingTime = updateResult.existingTime ? ` (${updateResult.existingTime})` : '';
-        await interaction.reply({
+        await interaction.editReply({
           content:
             `This match is already scheduled${existingDate || existingTime ? ` [current date${existingDate} time${existingTime}]` : ''}. ` +
             'Use /reschedule if you need to change it.',
-          flags: MessageFlags.Ephemeral,
         });
         return;
       }
 
       pendingProposalSchedules.delete(parsed.token);
-      await interaction.reply({
+      await interaction.editReply({
         content: '✅ Match scheduled from proposal successfully.',
-        flags: MessageFlags.Ephemeral,
       });
     } catch (error) {
       if (error?.code === 403 || error?.response?.status === 403) {
-        await interaction.reply({
+        await interaction.editReply({
           content:
             'Google Sheets update failed: service account lacks edit permission on this league sheet. Share the spreadsheet with GOOGLE_CLIENT_EMAIL as Editor.',
-          flags: MessageFlags.Ephemeral,
         });
         return;
       }
