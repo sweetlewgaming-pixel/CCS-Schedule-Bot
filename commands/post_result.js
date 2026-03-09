@@ -43,6 +43,7 @@ const PREVIEW_STATE_PATH = path.join(__dirname, '..', 'data', 'post-result-previ
 const PREVIEW_STATE_BACKUP_PATH = `${PREVIEW_STATE_PATH}.bak`;
 const SHEET_CACHE_TTL_MS = Math.max(0, Number(process.env.POST_RESULT_SHEET_CACHE_TTL_MS || 120000) || 120000);
 const EXTERNAL_STEP_TIMEOUT_MS = Math.max(3000, Number(process.env.POST_RESULT_STEP_TIMEOUT_MS || 20000) || 20000);
+const DEFAULT_WEBSITE_MATCH_BASE_URL = 'https://clutchcompetitorseries.com/schedule/match';
 const matchesByWeekCache = new Map();
 const standingsCache = new Map();
 const inputStatsCache = new Map();
@@ -180,7 +181,7 @@ function normalizeWebsiteUrl(match) {
   };
 
   const fromSheet = ensureHttp(match?.websiteLink);
-  const weekRaw = String(match?.week || '').trim();
+  const weekRaw = String(match?.week || match?.fallbackWeek || '').trim();
   const weekNumber = weekRaw.replace(/^week\s*/i, '').trim();
 
   const appendWeekQuery = (url) => {
@@ -226,7 +227,7 @@ function normalizeWebsiteUrl(match) {
     return appendWeekQuery(ensureHttp(built));
   }
 
-  const baseUrl = String(process.env.WEBSITE_MATCH_BASE_URL || '').trim();
+  const baseUrl = String(process.env.WEBSITE_MATCH_BASE_URL || DEFAULT_WEBSITE_MATCH_BASE_URL).trim();
   if (!baseUrl || !league || !weekNumber || !homeTeamSlug || !awayTeamSlug) {
     return '';
   }
@@ -1014,7 +1015,7 @@ module.exports = {
             continue;
           }
 
-          const websiteUrl = normalizeWebsiteUrl({ ...match, league });
+          const websiteUrl = normalizeWebsiteUrl({ ...match, league, fallbackWeek: week });
           const messageContent = `${winnerTeam} vs ${loserTeam} Week ${match.week} Result`;
           const weekText = String(match.week || '').replace(/^week\s*/i, '').trim() || String(week);
           const linkLabel = `${match.homeTeam} VS ${match.awayTeam} Week ${weekText} Website Link`.slice(0, 80);
