@@ -11,7 +11,7 @@ const {
 
 const { isAdminAuthorized } = require('../utils/permissions');
 const { getRoleIdByTeamName } = require('../utils/teamRoles');
-const { getMatchByChannel } = require('../services/googleSheets');
+const { getMatchByChannel, getMatchById } = require('../services/googleSheets');
 const { inferLeagueFromParentCategory, scheduleMatchById } = require('./schedule');
 const MENTION_DEBUG_ENABLED = String(process.env.MENTION_DEBUG || '').trim().toLowerCase() === 'true';
 const ACCEPT_EMOJI = '\u2705';
@@ -19,8 +19,8 @@ const REJECT_EMOJI = '\u274C';
 const SCHEDULE_BUTTON_PREFIX = 'propose:schedule';
 const SCHEDULE_CONFIRM_PREFIX = 'propose:confirm';
 const SCHEDULE_MODAL_PREFIX = 'propose:modal';
-const PROPOSAL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const pendingProposalSchedules = new Map();
+const activeProposalTokenByChannel = new Map();
 const DAY_VARIANTS = new Map([
   ['sun', { label: 'Sunday', index: 0 }],
   ['sunday', { label: 'Sunday', index: 0 }],
@@ -119,21 +119,56 @@ function validateTime(time) {
 }
 
 function cleanupExpiredProposalSchedules() {
-  const now = Date.now();
-  for (const [token, data] of pendingProposalSchedules.entries()) {
-    if (data.expiresAt <= now) {
-      pendingProposalSchedules.delete(token);
-    }
+  // No-op: proposal tokens are now channel-persistent until superseded or scheduled.
+}
+
+function getProposalChannelKey(guildId, channelId) {
+  return `${String(guildId || '').trim()}:${String(channelId || '').trim()}`;
+}
+
+function clearProposalToken(token, pending) {
+  if (!token) {
+    return;
   }
+  const proposal = pending || pendingProposalSchedules.get(token);
+  pendingProposalSchedules.delete(token);
+  if (!proposal?.channelKey) {
+    return;
+  }
+  if (activeProposalTokenByChannel.get(proposal.channelKey) === token) {
+    activeProposalTokenByChannel.delete(proposal.channelKey);
+  }
+}
+
+function hasMeaningfulScheduleValue(value) {
+  const cleaned = String(value || '').trim().toLowerCase();
+  return cleaned !== '' && cleaned !== 'tbd' && cleaned !== 'na' && cleaned !== 'n/a' && cleaned !== '-';
+}
+
+async function isPendingProposalAlreadyScheduled(pending) {
+  if (!pending?.league || !pending?.matchId) {
+    return false;
+  }
+  const currentMatch = await getMatchById(pending.league, pending.matchId).catch(() => null);
+  if (!currentMatch) {
+    return false;
+  }
+  return hasMeaningfulScheduleValue(currentMatch.date) && hasMeaningfulScheduleValue(currentMatch.time);
 }
 
 function createProposalScheduleToken(payload) {
   cleanupExpiredProposalSchedules();
   const token = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  const channelKey = getProposalChannelKey(payload.guildId, payload.channelId);
+  const previousToken = activeProposalTokenByChannel.get(channelKey);
+  if (previousToken) {
+    clearProposalToken(previousToken);
+  }
   pendingProposalSchedules.set(token, {
     ...payload,
-    expiresAt: Date.now() + PROPOSAL_CACHE_TTL_MS,
+    channelKey,
   });
+  activeProposalTokenByChannel.set(channelKey, token);
   return token;
 }
 
@@ -379,8 +414,9 @@ module.exports = {
 
       cleanupExpiredProposalSchedules();
       const pending = pendingProposalSchedules.get(confirmParsed.token);
-      if (!pending || pending.expiresAt <= Date.now()) {
-        pendingProposalSchedules.delete(confirmParsed.token);
+      const channelKey = getProposalChannelKey(interaction.guildId, interaction.channelId);
+      if (!pending || activeProposalTokenByChannel.get(channelKey) !== confirmParsed.token) {
+        clearProposalToken(confirmParsed.token, pending);
         await interaction.update({
           content: 'This proposal scheduling confirmation expired. Post a new /propose_time request.',
           components: [],
@@ -392,6 +428,15 @@ module.exports = {
         await interaction.reply({
           content: 'This scheduling confirmation is only valid in the original matchup channel.',
           flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      if (await isPendingProposalAlreadyScheduled(pending)) {
+        clearProposalToken(confirmParsed.token, pending);
+        await interaction.update({
+          content: 'This matchup is already scheduled. Post a new /propose_time only if another proposal is needed.',
+          components: [],
         });
         return;
       }
@@ -434,7 +479,7 @@ module.exports = {
             return;
           }
 
-          pendingProposalSchedules.delete(confirmParsed.token);
+          clearProposalToken(confirmParsed.token, pending);
           await interaction.editReply({
             content: '✅ Match scheduled from proposal successfully.',
             components: [],
@@ -472,8 +517,9 @@ module.exports = {
 
     cleanupExpiredProposalSchedules();
     const pending = pendingProposalSchedules.get(parsed.token);
-    if (!pending || pending.expiresAt <= Date.now()) {
-      pendingProposalSchedules.delete(parsed.token);
+    const channelKey = getProposalChannelKey(interaction.guildId, interaction.channelId);
+    if (!pending || activeProposalTokenByChannel.get(channelKey) !== parsed.token) {
+      clearProposalToken(parsed.token, pending);
       await interaction.reply({
         content: 'This proposal scheduling button expired. Post a new /propose_time request.',
         flags: MessageFlags.Ephemeral,
@@ -484,6 +530,15 @@ module.exports = {
     if (pending.guildId !== interaction.guildId || pending.channelId !== interaction.channelId) {
       await interaction.reply({
         content: 'This scheduling button is only valid in the original matchup channel.',
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    if (await isPendingProposalAlreadyScheduled(pending)) {
+      clearProposalToken(parsed.token, pending);
+      await interaction.reply({
+        content: 'This matchup is already scheduled. Post a new /propose_time only if another proposal is needed.',
         flags: MessageFlags.Ephemeral,
       });
       return;
@@ -512,8 +567,9 @@ module.exports = {
 
     cleanupExpiredProposalSchedules();
     const pending = pendingProposalSchedules.get(parsed.token);
-    if (!pending || pending.expiresAt <= Date.now()) {
-      pendingProposalSchedules.delete(parsed.token);
+    const channelKey = getProposalChannelKey(interaction.guildId, interaction.channelId);
+    if (!pending || activeProposalTokenByChannel.get(channelKey) !== parsed.token) {
+      clearProposalToken(parsed.token, pending);
       await interaction.reply({
         content: 'This proposal scheduling session expired. Post a new /propose_time request.',
         flags: MessageFlags.Ephemeral,
@@ -524,6 +580,15 @@ module.exports = {
     if (pending.guildId !== interaction.guildId || pending.channelId !== interaction.channelId) {
       await interaction.reply({
         content: 'This scheduling session is only valid in the original matchup channel.',
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    if (await isPendingProposalAlreadyScheduled(pending)) {
+      clearProposalToken(parsed.token, pending);
+      await interaction.reply({
+        content: 'This matchup is already scheduled. Post a new /propose_time only if another proposal is needed.',
         flags: MessageFlags.Ephemeral,
       });
       return;
@@ -571,7 +636,7 @@ module.exports = {
         return;
       }
 
-      pendingProposalSchedules.delete(parsed.token);
+      clearProposalToken(parsed.token, pending);
       await interaction.editReply({
         content: '✅ Match scheduled from proposal successfully.',
       });
