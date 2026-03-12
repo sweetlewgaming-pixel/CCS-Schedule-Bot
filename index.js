@@ -17,7 +17,6 @@ const availabilityCommand = require('./commands/availability');
 const availabilityAdminCommand = require('./commands/availability_admin');
 const helpCommand = require('./commands/help');
 const postResultCommand = require('./commands/post_result');
-const { startMatchReminderService } = require('./services/matchReminderService');
 const { prewarmRenderer } = require('./services/resultCardRenderer');
 
 const requiredEnv = ['DISCORD_TOKEN', 'CLIENT_ID', 'GOOGLE_CLIENT_EMAIL', 'GOOGLE_PRIVATE_KEY'];
@@ -84,13 +83,6 @@ client.once(Events.ClientReady, async (readyClient) => {
     await registerSlashCommands();
   } catch (error) {
     console.error('Failed to register slash commands:', error);
-  }
-
-  const remindersDisabled = String(process.env.DISABLE_REMINDERS || '').trim().toLowerCase() === 'true';
-  if (!remindersDisabled) {
-    startMatchReminderService(readyClient);
-  } else {
-    console.log('Match reminder service disabled via DISABLE_REMINDERS=true');
   }
 
   prewarmRenderer()

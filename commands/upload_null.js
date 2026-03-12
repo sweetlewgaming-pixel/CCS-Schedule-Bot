@@ -375,9 +375,17 @@ async function processUploadStaff(interaction, league, match, link, groupData, t
       const replayDistanceMap = await fetchGroupReplayTeammateDistanceMap(link).catch(() => new Map());
       applyReplayTeammateDistanceFallback(playerRows, replayDistanceMap);
       const teamRows = buildBallchasingTeamRows(groupData, playerRows);
-      await appendPlayerInputRows(league, playerRows);
-      await appendTeamInputRows(league, teamRows);
+      console.log(
+        `[upload_admin] Importing stats for ${league} ${match.matchId}: playerRows=${playerRows.length} teamRows=${teamRows.length}`
+      );
+      const playerAppendResult = await appendPlayerInputRows(league, playerRows);
+      const teamAppendResult = await appendTeamInputRows(league, teamRows);
+      console.log(
+        `[upload_admin] Stats import complete for ${league} ${match.matchId}: ` +
+          `PlayerInput inserted=${playerAppendResult.insertedRows} TeamInput inserted=${teamAppendResult.insertedRows}`
+      );
     } catch (error) {
+      console.error(`[upload_admin] Stats import failed for ${league} ${match.matchId}:`, error);
       const modAdminMentions = await buildModAdminAlertMentions(interaction.guild);
       const alertPrefix = modAdminMentions ? `${modAdminMentions} ` : '';
       await interaction.channel

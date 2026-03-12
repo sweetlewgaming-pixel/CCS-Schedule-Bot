@@ -18,6 +18,8 @@ const STATS_SPREADSHEET_IDS = {
   CAS: process.env.CAS_STATS_SHEET_ID || SPREADSHEET_IDS.CAS,
   CNL: process.env.CNL_STATS_SHEET_ID || SPREADSHEET_IDS.CNL,
 };
+const STATS_HEADER_CACHE_TTL_MS = 5 * 60 * 1000;
+const statsHeaderCache = new Map();
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -62,6 +64,31 @@ async function sheetsValuesGetWithRetry(sheets, params, options = {}) {
   }
 
   throw new Error('Sheets read failed after retries.');
+}
+
+async function sheetsValuesAppendWithRetry(sheets, params, options = {}) {
+  const maxAttempts = Number(options.maxAttempts || 6);
+  const initialDelayMs = Number(options.initialDelayMs || 1500);
+
+  let attempt = 0;
+  let delay = initialDelayMs;
+  while (attempt < maxAttempts) {
+    attempt += 1;
+    try {
+      return await sheets.spreadsheets.values.append(params);
+    } catch (error) {
+      const status = Number(error?.code || error?.status || error?.response?.status || 0);
+      const retryable = isGoogleQuotaError(error) || status >= 500;
+      if (!retryable || attempt >= maxAttempts) {
+        throw error;
+      }
+      const jitter = Math.floor(Math.random() * 400);
+      await sleep(delay + jitter);
+      delay = Math.min(delay * 2, 30000);
+    }
+  }
+
+  throw new Error('Sheets append failed after retries.');
 }
 
 function getSheetsClient() {
@@ -118,6 +145,30 @@ function colNumberToLetter(colNumber) {
 
 function getStatsSpreadsheetId(league) {
   return STATS_SPREADSHEET_IDS[league];
+}
+
+async function getStatsSheetHeaders(sheets, spreadsheetId, sheetName) {
+  const cacheKey = `${spreadsheetId}:${sheetName}`;
+  const now = Date.now();
+  const cached = statsHeaderCache.get(cacheKey);
+  if (cached && cached.expiresAt > now && Array.isArray(cached.headers) && cached.headers.length) {
+    return cached.headers;
+  }
+
+  const headerResponse = await sheetsValuesGetWithRetry(sheets, {
+    spreadsheetId,
+    range: `${sheetName}!1:1`,
+  });
+  const headers = headerResponse.data.values?.[0] || [];
+  if (!headers.length) {
+    throw new Error(`No header row found in ${sheetName}.`);
+  }
+
+  statsHeaderCache.set(cacheKey, {
+    headers,
+    expiresAt: now + STATS_HEADER_CACHE_TTL_MS,
+  });
+  return headers;
 }
 
 function getValueForHeader(row, header) {
@@ -834,15 +885,7 @@ async function appendStatsRows(league, sheetName, rowsToAppend, options = {}) {
   const includeSpacerRow = options.includeSpacerRow !== false;
 
   const sheets = getSheetsClient();
-  const headerResponse = await sheetsValuesGetWithRetry(sheets, {
-    spreadsheetId,
-    range: `${sheetName}!1:1`,
-  });
-  const headers = headerResponse.data.values?.[0] || [];
-  if (!headers.length) {
-    throw new Error(`No header row found in ${sheetName}.`);
-  }
-
+  const headers = await getStatsSheetHeaders(sheets, spreadsheetId, sheetName);
   const normalizedHeaders = headers.map(normalizeHeader);
   const values = [];
   if (includeSpacerRow) {
@@ -859,7 +902,7 @@ async function appendStatsRows(league, sheetName, rowsToAppend, options = {}) {
     );
   }
 
-  const response = await sheets.spreadsheets.values.append({
+  const response = await sheetsValuesAppendWithRetry(sheets, {
     spreadsheetId,
     range: `${sheetName}!A1`,
     valueInputOption: 'USER_ENTERED',
